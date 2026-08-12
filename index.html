@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgroSky | Weather & Farming Intelligence</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span>🌱</span> AgroSky</div>
+  <button class="menu" aria-label="Toggle menu">☰</button>
+  <nav>
+    <a href="#home">Home</a>
+    <a href="#features">Main Features</a>
+    <a href="#gallery">Gallery</a>
+    <a href="#about">About</a>
+    <a href="#contact">Contact</a>
+  </nav>
+</header>
+
+<main>
+<section id="home" class="hero">
+  <div class="hero-content">
+    <p class="eyebrow">SMART FARMING • WEATHER INTELLIGENCE</p>
+    <h1>Grow smarter with weather-aware farming.</h1>
+    <p>Check local conditions, plan field activities, discover crop suggestions, and respond quickly to weather risks.</p>
+    <div class="search">
+      <input id="locationInput" placeholder="Search a city or farming location" value="Lagos">
+      <button id="searchBtn">Check Weather</button>
+    </div>
+    <p id="status" class="status">Showing demo conditions for Lagos. Search to explore another location.</p>
+  </div>
+  <div class="hero-card">
+    <div class="sun">☀️</div>
+    <div><span id="heroTemp">29°C</span><small>Partly cloudy</small></div>
+    <strong id="heroPlace">Lagos</strong>
+    <span>Humidity 78% • Wind 12 km/h</span>
+  </div>
+</section>
+
+<section id="features" class="section">
+  <div class="section-heading">
+    <p class="eyebrow">LIVE DASHBOARD</p>
+    <h2>Weather at a glance</h2>
+    <p>Use the dashboard as a planning companion for irrigation, planting, spraying and harvesting decisions.</p>
+  </div>
+  <div class="weather-grid">
+    <article class="current card">
+      <div class="card-top"><span>Current Weather</span><span id="weatherIcon">🌤️</span></div>
+      <div class="big-temp" id="currentTemp">29°C</div>
+      <h3 id="currentCondition">Partly cloudy</h3>
+      <div class="metrics">
+        <span>💧 <b id="humidity">78%</b><small>Humidity</small></span>
+        <span>💨 <b id="wind">12 km/h</b><small>Wind</small></span>
+        <span>🌧️ <b id="rain">30%</b><small>Rain chance</small></span>
+      </div>
+    </article>
+
+    <div class="forecast" id="forecast"></div>
+  </div>
+</section>
+
+<section class="section soft">
+  <div class="section-heading">
+    <p class="eyebrow">FARMING ASSISTANT</p>
+    <h2>What should you do today?</h2>
+  </div>
+  <div class="info-grid">
+    <article class="card">
+      <div class="icon">🌾</div>
+      <h3>Crop suggestions</h3>
+      <p>For warm, humid conditions, consider crops suited to tropical growing environments.</p>
+      <ul id="cropList">
+        <li>Maize</li><li>Cassava</li><li>Okra</li><li>Tomato</li>
+      </ul>
+    </article>
+    <article class="card">
+      <div class="icon">🧑🏾‍🌾</div>
+      <h3>Farming tips</h3>
+      <ul>
+        <li>Inspect soil moisture before irrigation.</li>
+        <li>Schedule spraying when wind is low and rain is unlikely.</li>
+        <li>Keep drainage channels clear before heavy rainfall.</li>
+        <li>Record field observations to improve future decisions.</li>
+      </ul>
+    </article>
+    <article class="card alert-card">
+      <div class="icon">⚠️</div>
+      <h3>Farm alerts</h3>
+      <div id="alerts">
+        <div class="alert"><b>Rain watch</b><span>Moderate rain probability. Protect harvested produce.</span></div>
+        <div class="alert"><b>Field check</b><span>Review drainage around low-lying areas.</span></div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="gallery" class="section">
+  <div class="section-heading"><p class="eyebrow">FIELD CONTEXT</p><h2>From weather to action</h2></div>
+  <div class="gallery">
+    <div class="photo photo1"><span>Crop planning</span></div>
+    <div class="photo photo2"><span>Healthy crops</span></div>
+    <div class="photo photo3"><span>Water management</span></div>
+    <div class="photo photo4"><span>Farm monitoring</span></div>
+  </div>
+</section>
+
+<section id="about" class="section about">
+  <div>
+    <p class="eyebrow">ABOUT AGROSKY</p>
+    <h2>Practical intelligence for everyday farmers.</h2>
+  </div>
+  <p>AgroSky is a responsive demonstration platform that combines weather awareness with simple farming guidance. It is designed to help farmers turn environmental information into practical field decisions.</p>
+</section>
+
+<section id="contact" class="section contact">
+  <div class="section-heading"><p class="eyebrow">CONTACT</p><h2>Stay connected</h2><p>Send feedback or request a farm-weather feature.</p></div>
+  <form id="contactForm" class="contact-form">
+    <input required placeholder="Your name">
+    <input required type="email" placeholder="Email address">
+    <textarea required placeholder="Your message"></textarea>
+    <button type="submit">Send Message</button>
+    <p id="formMsg"></p>
+  </form>
+</section>
+</main>
+
+<footer><div class="brand">🌱 AgroSky</div><p>Weather + farming information for smarter field decisions.</p><span>© 2026 AgroSky</span></footer>
+<script src="script.js"></script>
+</body>
+</html>
