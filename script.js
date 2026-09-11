@@ -1,436 +1,1032 @@
-const demo = {
-  Lagos: {
-    temp: 29,
-    condition: "Partly cloudy",
-    icon: "🌤️",
-    humidity: 78,
-    wind: 12,
-    rain: 30,
-    crops: ["Maize", "Cassava", "Okra", "Tomato"]
+/* =========================================================
+   AGROSKY - WEATHER & FARMING INTELLIGENCE
+   Corrected version based on the original JavaScript
+   ========================================================= */
+
+const API_BASE = "https://api.open-meteo.com/v1/forecast";
+const GEO_BASE = "https://geocoding-api.open-meteo.com/v1/search";
+
+/* =========================================================
+   ELEMENTS
+   ========================================================= */
+
+const elements = {
+  locationInput: document.querySelector("#locationInput"),
+  searchBtn: document.querySelector("#searchBtn"),
+  status: document.querySelector("#status"),
+
+  heroTemp: document.querySelector("#heroTemp"),
+  heroCondition: document.querySelector("#heroCondition"),
+  heroPlace: document.querySelector("#heroPlace"),
+  heroMetrics: document.querySelector("#heroMetrics"),
+  heroIcon: document.querySelector("#heroIcon"),
+
+  weatherIcon: document.querySelector("#weatherIcon"),
+  currentTemp: document.querySelector("#currentTemp"),
+  currentCondition: document.querySelector("#currentCondition"),
+  humidity: document.querySelector("#humidity"),
+  wind: document.querySelector("#wind"),
+  rain: document.querySelector("#rain"),
+
+  forecast: document.querySelector("#forecast"),
+
+  cropList: document.querySelector("#cropList"),
+  tipsList: document.querySelector("#tipsList"),
+
+  // Supports either #alertsList or #alerts
+  alerts:
+    document.querySelector("#alertsList") ||
+    document.querySelector("#alerts"),
+
+  aiAdvice: document.querySelector("#aiAdvice"),
+  aiStatus: document.querySelector("#aiStatus"),
+  aiBadge: document.querySelector("#aiBadge"),
+
+  contactForm: document.querySelector("#contactForm"),
+  formMsg: document.querySelector("#formMsg"),
+
+  menuBtn: document.querySelector("#menuBtn"),
+  nav: document.querySelector(".nav")
+};
+
+
+/* =========================================================
+   WEATHER DESCRIPTIONS
+   ========================================================= */
+
+const weatherDescriptions = {
+  0: {
+    text: "Clear sky",
+    icon: "☀️"
   },
 
-  Ibadan: {
-    temp: 28,
-    condition: "Cloudy",
-    icon: "☁️",
-    humidity: 81,
-    wind: 10,
-    rain: 45,
-    crops: ["Maize", "Cassava", "Pepper", "Vegetables"]
+  1: {
+    text: "Mainly clear",
+    icon: "🌤️"
   },
 
-  Abuja: {
-    temp: 27,
-    condition: "Sunny",
-    icon: "☀️",
-    humidity: 52,
-    wind: 15,
-    rain: 15,
-    crops: ["Maize", "Sorghum", "Millet", "Groundnut"]
+  2: {
+    text: "Partly cloudy",
+    icon: "⛅"
   },
 
-  Kano: {
-    temp: 31,
-    condition: "Hot and sunny",
-    icon: "☀️",
-    humidity: 34,
-    wind: 18,
-    rain: 10,
-    crops: ["Sorghum", "Millet", "Tomato", "Onion"]
+  3: {
+    text: "Overcast",
+    icon: "☁️"
+  },
+
+  45: {
+    text: "Foggy",
+    icon: "🌫️"
+  },
+
+  48: {
+    text: "Rime fog",
+    icon: "🌫️"
+  },
+
+  51: {
+    text: "Light drizzle",
+    icon: "🌦️"
+  },
+
+  53: {
+    text: "Moderate drizzle",
+    icon: "🌦️"
+  },
+
+  55: {
+    text: "Heavy drizzle",
+    icon: "🌧️"
+  },
+
+  61: {
+    text: "Light rain",
+    icon: "🌦️"
+  },
+
+  63: {
+    text: "Moderate rain",
+    icon: "🌧️"
+  },
+
+  65: {
+    text: "Heavy rain",
+    icon: "🌧️"
+  },
+
+  71: {
+    text: "Light snow",
+    icon: "🌨️"
+  },
+
+  73: {
+    text: "Moderate snow",
+    icon: "🌨️"
+  },
+
+  75: {
+    text: "Heavy snow",
+    icon: "❄️"
+  },
+
+  80: {
+    text: "Light rain showers",
+    icon: "🌦️"
+  },
+
+  81: {
+    text: "Moderate rain showers",
+    icon: "🌧️"
+  },
+
+  82: {
+    text: "Heavy rain showers",
+    icon: "⛈️"
+  },
+
+  95: {
+    text: "Thunderstorm",
+    icon: "⛈️"
+  },
+
+  96: {
+    text: "Thunderstorm with hail",
+    icon: "⛈️"
+  },
+
+  99: {
+    text: "Severe thunderstorm",
+    icon: "⛈️"
   }
 };
 
 
-/* =========================
-   WEATHER ENGINE
-========================= */
+/* =========================================================
+   HELPER FUNCTIONS
+   ========================================================= */
 
-function findWeather(place) {
-
-  const cleanPlace = place.trim();
-
-  const key = Object.keys(demo).find(
-    k => cleanPlace.toLowerCase().includes(k.toLowerCase())
+function getWeatherDescription(code) {
+  return (
+    weatherDescriptions[code] || {
+      text: "Unknown conditions",
+      icon: "🌤️"
+    }
   );
+}
 
-  if (key) {
-    return {
-      ...demo[key],
-      place: key
-    };
+
+function formatTemperature(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "--";
   }
 
-  const seed = [...cleanPlace]
-    .reduce((a, c) => a + c.charCodeAt(0), 0);
+  return `${Math.round(value)}°C`;
+}
+
+
+function formatDate(dateString) {
+  const date = new Date(`${dateString}T12:00:00`);
+
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+
+/* =========================================================
+   FETCH WITH TIMEOUT
+   ========================================================= */
+
+async function fetchWithTimeout(url, options = {}, timeout = 15000) {
+  const controller = new AbortController();
+
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+
+/* =========================================================
+   GEOCODE LOCATION
+   ========================================================= */
+
+async function geocodeLocation(place) {
+  const query = String(place || "").trim();
+
+  if (!query) {
+    throw new Error("Please enter a city or farming location.");
+  }
+
+  const url =
+    `${GEO_BASE}?name=${encodeURIComponent(query)}` +
+    `&count=1` +
+    `&language=en` +
+    `&format=json`;
+
+  let response;
+
+  try {
+    response = await fetchWithTimeout(url);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(
+        "Location search timed out. Please check your internet connection."
+      );
+    }
+
+    throw new Error(
+      "Unable to connect to the location service."
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Location service returned error ${response.status}.`
+    );
+  }
+
+  const data = await response.json();
+
+  if (
+    !data ||
+    !data.results ||
+    data.results.length === 0
+  ) {
+    throw new Error(
+      `We could not find "${query}". Try another city or location.`
+    );
+  }
+
+  const result = data.results[0];
 
   return {
-    place: cleanPlace || "Lagos",
-    temp: 26 + (seed % 8),
-    condition: "Variable clouds",
-    icon: "🌥️",
-    humidity: 55 + (seed % 25),
-    wind: 8 + (seed % 14),
-    rain: 20 + (seed % 55),
-    crops: [
-      "Maize",
-      "Beans",
-      "Cassava",
-      "Vegetables"
-    ]
+    name: result.name,
+    latitude: result.latitude,
+    longitude: result.longitude,
+    country: result.country || "",
+    admin1: result.admin1 || ""
   };
 }
 
 
-/* =========================
-   AI FARMING ENGINE
-========================= */
+/* =========================================================
+   GET WEATHER
+   ========================================================= */
 
-function generateAIAdvice(w) {
+async function getWeather(latitude, longitude) {
+  const params = new URLSearchParams({
+    latitude: latitude,
+    longitude: longitude,
+
+    current:
+      "temperature_2m," +
+      "relative_humidity_2m," +
+      "apparent_temperature," +
+      "precipitation," +
+      "rain," +
+      "weather_code," +
+      "wind_speed_10m",
+
+    hourly:
+      "temperature_2m," +
+      "precipitation_probability," +
+      "weather_code",
+
+    daily:
+      "weather_code," +
+      "temperature_2m_max," +
+      "temperature_2m_min," +
+      "precipitation_probability_max," +
+      "precipitation_sum",
+
+    timezone: "auto",
+
+    forecast_days: "7"
+  });
+
+  const url = `${API_BASE}?${params.toString()}`;
+
+  let response;
+
+  try {
+    response = await fetchWithTimeout(url);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(
+        "Weather request timed out. Please try again."
+      );
+    }
+
+    throw new Error(
+      "Unable to connect to the weather service."
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Weather service returned error ${response.status}.`
+    );
+  }
+
+  const data = await response.json();
+
+  if (!data || !data.current) {
+    throw new Error(
+      "The weather service returned incomplete information."
+    );
+  }
+
+  return data;
+}
+
+
+/* =========================================================
+   CROP RECOMMENDATIONS
+   ========================================================= */
+
+function getCropSuggestions(weather) {
+  const temperature =
+    weather?.current?.temperature_2m ?? 0;
+
+  const rainProbability =
+    weather?.daily?.precipitation_probability_max?.[0] ?? 0;
+
+  const crops = [];
+
+  if (temperature >= 24 && temperature <= 34) {
+    crops.push("🌽 Maize");
+  }
+
+  if (temperature >= 22 && temperature <= 35) {
+    crops.push("🌱 Cassava");
+  }
+
+  if (temperature >= 23 && temperature <= 34) {
+    crops.push("🥬 Okra");
+  }
+
+  if (temperature >= 20 && temperature <= 32) {
+    crops.push("🍅 Tomato");
+  }
+
+  if (crops.length === 0) {
+    crops.push("🌱 Cassava");
+    crops.push("🌽 Maize");
+  }
+
+  if (rainProbability > 60) {
+    crops.push("🥒 Water-friendly crops");
+  }
+
+  return crops.slice(0, 5);
+}
+
+
+/* =========================================================
+   FARMING TIPS
+   ========================================================= */
+
+function getFarmingTips(weather) {
+  const current = weather?.current || {};
+  const daily = weather?.daily || {};
+
+  const humidity =
+    current.relative_humidity_2m ?? 0;
+
+  const wind =
+    current.wind_speed_10m ?? 0;
+
+  const rainProbability =
+    daily.precipitation_probability_max?.[0] ?? 0;
+
+  const tips = [];
+
+  if (humidity >= 75) {
+    tips.push(
+      "Monitor soil moisture closely because humidity is high."
+    );
+  } else {
+    tips.push(
+      "Check soil moisture before deciding when to irrigate."
+    );
+  }
+
+  if (rainProbability >= 50) {
+    tips.push(
+      "Rain is possible, so consider delaying spraying or fertilizer application."
+    );
+
+    tips.push(
+      "Check drainage around low-lying parts of the farm."
+    );
+  } else {
+    tips.push(
+      "Plan irrigation according to soil moisture and crop needs."
+    );
+  }
+
+  if (wind >= 20) {
+    tips.push(
+      "Strong winds are possible. Avoid spraying during windy conditions."
+    );
+  } else {
+    tips.push(
+      "Weather conditions are suitable for routine field observation."
+    );
+  }
+
+  return tips.slice(0, 4);
+}
+
+
+/* =========================================================
+   FARM ALERTS
+   ========================================================= */
+
+function getFarmAlerts(weather) {
+  const current = weather?.current || {};
+  const daily = weather?.daily || {};
+
+  const rainProbability =
+    daily.precipitation_probability_max?.[0] ?? 0;
+
+  const wind =
+    current.wind_speed_10m ?? 0;
+
+  const temperature =
+    current.temperature_2m ?? 0;
+
+  const alerts = [];
+
+  if (rainProbability >= 70) {
+    alerts.push({
+      title: "Rain watch",
+      text:
+        "High rain probability. Protect harvested produce and check drainage."
+    });
+  } else if (rainProbability >= 40) {
+    alerts.push({
+      title: "Rain possible",
+      text:
+        "Moderate rain probability. Monitor the forecast before major field activities."
+    });
+  } else {
+    alerts.push({
+      title: "Low rain risk",
+      text:
+        "Rain probability is currently low. Continue monitoring soil moisture."
+    });
+  }
+
+  if (wind >= 25) {
+    alerts.push({
+      title: "Wind alert",
+      text:
+        "Strong winds are possible. Take care with spraying and exposed crops."
+    });
+  } else {
+    alerts.push({
+      title: "Field check",
+      text:
+        "Review crops, soil moisture and drainage during your routine field inspection."
+    });
+  }
+
+  if (temperature >= 35) {
+    alerts.push({
+      title: "Heat watch",
+      text:
+        "High temperatures are expected. Monitor crops and water availability."
+    });
+  }
+
+  return alerts;
+}
+
+
+/* =========================================================
+   UPDATE FARMING ASSISTANT
+   ========================================================= */
+
+function updateAssistant(weather) {
+  const crops = getCropSuggestions(weather);
+  const tips = getFarmingTips(weather);
+  const alerts = getFarmAlerts(weather);
+
+  /* ---------- CROPS ---------- */
+
+  if (elements.cropList) {
+    elements.cropList.innerHTML = "";
+
+    crops.forEach((crop) => {
+      const li = document.createElement("li");
+      li.textContent = crop;
+      elements.cropList.appendChild(li);
+    });
+  }
+
+  /* ---------- TIPS ---------- */
+
+  if (elements.tipsList) {
+    elements.tipsList.innerHTML = "";
+
+    tips.forEach((tip) => {
+      const li = document.createElement("li");
+      li.textContent = tip;
+      elements.tipsList.appendChild(li);
+    });
+  }
+
+  /* ---------- ALERTS ---------- */
+
+  if (elements.alerts) {
+    elements.alerts.innerHTML = "";
+
+    alerts.forEach((alert) => {
+      const item = document.createElement("div");
+
+      item.className = "alert-item";
+
+      item.innerHTML = `
+        <strong>${alert.title}</strong>
+        <p>${alert.text}</p>
+      `;
+
+      elements.alerts.appendChild(item);
+    });
+  }
+}
+
+
+/* =========================================================
+   AI FARMING ADVICE
+   ========================================================= */
+
+function updateAIAdvice(weather, location) {
+  if (!elements.aiAdvice) {
+    return;
+  }
+
+  const current = weather?.current || {};
+  const daily = weather?.daily || {};
+
+  const temperature =
+    Math.round(current.temperature_2m ?? 0);
+
+  const humidity =
+    current.relative_humidity_2m ?? 0;
+
+  const wind =
+    Math.round(current.wind_speed_10m ?? 0);
+
+  const rainProbability =
+    daily.precipitation_probability_max?.[0] ?? 0;
 
   let advice = "";
 
-  if (w.rain >= 60) {
-
+  if (rainProbability >= 70) {
     advice =
-      `🌧️ High rainfall risk detected in ${w.place}. ` +
-      `Prioritize drainage, postpone spraying, protect harvested crops ` +
-      `and inspect low-lying parts of the farm.`;
-
-  } else if (w.rain >= 40) {
-
+      `For ${location.name}, rain probability is high today. ` +
+      `Prioritize drainage checks, protect harvested crops, ` +
+      `and avoid unnecessary spraying before rainfall.`;
+  } else if (temperature >= 35) {
     advice =
-      `🌦️ Moderate rain is expected in ${w.place}. ` +
-      `Check drainage channels and consider completing outdoor field work ` +
-      `before rainfall increases.`;
-
-  } else if (w.temp >= 31 && w.humidity < 50) {
-
+      `Conditions in ${location.name} are hot. ` +
+      `Monitor soil moisture, provide irrigation where needed, ` +
+      `and watch crops for heat stress.`;
+  } else if (wind >= 25) {
     advice =
-      `☀️ Hot and relatively dry conditions detected. ` +
-      `Monitor soil moisture closely and irrigate crops when necessary. ` +
-      `Avoid unnecessary water loss during the hottest part of the day.`;
-
-  } else if (w.wind >= 18) {
-
-    advice =
-      `💨 Stronger winds are being detected. ` +
-      `Avoid spraying pesticides or fertilizers during windy periods ` +
-      `and secure vulnerable farm materials.`;
-
+      `Wind speeds are elevated around ${location.name}. ` +
+      `Avoid spraying during strong winds and inspect exposed crops.`;
   } else {
-
     advice =
-      `🌱 Conditions around ${w.place} look generally suitable for routine ` +
-      `field inspection. Check soil moisture, monitor crops for pests ` +
-      `and plan irrigation according to field conditions.`;
+      `Conditions around ${location.name} look suitable for routine ` +
+      `farm activities. Check soil moisture, inspect crops, and use ` +
+      `the latest forecast before making major field decisions.`;
   }
 
-  return advice;
+  elements.aiAdvice.textContent = advice;
+
+  if (elements.aiStatus) {
+    elements.aiStatus.textContent =
+      "AI farming advice updated from current weather";
+  }
+
+  if (elements.aiBadge) {
+    elements.aiBadge.textContent =
+      "✨ AI Assistant: Monitoring your farm conditions";
+  }
 }
 
 
-/* =========================
-   AI UPDATE
-========================= */
+/* =========================================================
+   RENDER FORECAST
+   ========================================================= */
 
-function updateAI(w) {
+function renderForecast(weather) {
+  if (!elements.forecast) {
+    return;
+  }
 
-  const advice = document.querySelector("#aiAdvice");
-  const status = document.querySelector("#aiStatus");
-  const badge = document.querySelector("#aiBadge");
+  const daily = weather?.daily;
 
-  if (!advice) return;
+  if (
+    !daily ||
+    !daily.time ||
+    daily.time.length === 0
+  ) {
+    elements.forecast.innerHTML =
+      "<p>Forecast information is currently unavailable.</p>";
 
-  status.textContent = "AI is analyzing weather conditions...";
+    return;
+  }
 
-  advice.style.opacity = "0";
+  elements.forecast.innerHTML = "";
 
-  setTimeout(() => {
+  daily.time.forEach((date, index) => {
+    const weatherCode =
+      daily.weather_code?.[index];
 
-    advice.textContent = generateAIAdvice(w);
+    const description =
+      getWeatherDescription(weatherCode);
 
-    advice.style.transition = "opacity .5s ease";
-    advice.style.opacity = "1";
+    const max =
+      daily.temperature_2m_max?.[index];
 
-    status.textContent =
-      `AI analysis updated for ${w.place}`;
+    const min =
+      daily.temperature_2m_min?.[index];
 
-    if (badge) {
-      badge.textContent =
-        `✨ AI Assistant: ${w.place} conditions monitored`;
+    const rain =
+      daily.precipitation_probability_max?.[index] ?? 0;
+
+    const card = document.createElement("div");
+
+    card.className = "forecast-card";
+
+    card.innerHTML = `
+      <div class="forecast-date">
+        ${formatDate(date)}
+      </div>
+
+      <div class="forecast-icon">
+        ${description.icon}
+      </div>
+
+      <div class="forecast-condition">
+        ${description.text}
+      </div>
+
+      <div class="forecast-temp">
+        ${formatTemperature(max)}
+        /
+        ${formatTemperature(min)}
+      </div>
+
+      <div class="forecast-rain">
+        💧 ${rain}% rain
+      </div>
+    `;
+
+    elements.forecast.appendChild(card);
+  });
+}
+
+
+/* =========================================================
+   RENDER CURRENT WEATHER
+   ========================================================= */
+
+function renderWeather(weather, location) {
+  const current = weather?.current;
+
+  if (!current) {
+    throw new Error(
+      "Current weather data is unavailable."
+    );
+  }
+
+  const description =
+    getWeatherDescription(
+      current.weather_code
+    );
+
+  const temperature =
+    formatTemperature(
+      current.temperature_2m
+    );
+
+  const humidity =
+    current.relative_humidity_2m ?? "--";
+
+  const wind =
+    current.wind_speed_10m ?? "--";
+
+  const rain =
+    weather?.daily?.precipitation_probability_max?.[0] ?? 0;
+
+
+  /* =======================================================
+     HERO
+     ======================================================= */
+
+  if (elements.heroTemp) {
+    elements.heroTemp.textContent = temperature;
+  }
+
+  if (elements.heroCondition) {
+    elements.heroCondition.textContent =
+      description.text;
+  }
+
+  if (elements.heroPlace) {
+    elements.heroPlace.textContent =
+      location.name;
+  }
+
+  if (elements.heroMetrics) {
+    elements.heroMetrics.textContent =
+      `Humidity ${humidity}% • Wind ${Math.round(wind)} km/h`;
+  }
+
+  if (elements.heroIcon) {
+    elements.heroIcon.textContent =
+      description.icon;
+  }
+
+
+  /* =======================================================
+     DASHBOARD
+     ======================================================= */
+
+  if (elements.weatherIcon) {
+    elements.weatherIcon.textContent =
+      description.icon;
+  }
+
+  if (elements.currentTemp) {
+    elements.currentTemp.textContent =
+      temperature;
+  }
+
+  if (elements.currentCondition) {
+    elements.currentCondition.textContent =
+      description.text;
+  }
+
+  if (elements.humidity) {
+    elements.humidity.textContent =
+      `${humidity}%`;
+  }
+
+  if (elements.wind) {
+    elements.wind.textContent =
+      `${Math.round(wind)} km/h`;
+  }
+
+  if (elements.rain) {
+    elements.rain.textContent =
+      `${rain}%`;
+  }
+
+
+  /* =======================================================
+     OTHER SECTIONS
+     ======================================================= */
+
+  renderForecast(weather);
+
+  updateAssistant(weather);
+
+  updateAIAdvice(weather, location);
+}
+
+
+/* =========================================================
+   SEARCH WEATHER
+   ========================================================= */
+
+async function searchWeather(place) {
+  const searchPlace =
+    String(place || "").trim();
+
+  if (!searchPlace) {
+    if (elements.status) {
+      elements.status.textContent =
+        "Please enter a city or farming location.";
     }
 
-  }, 500);
-}
-
-
-/* =========================
-   RENDER WEATHER
-========================= */
-
-function render(place) {
-
-  const w = findWeather(place);
-
-  document.querySelector("#heroTemp").textContent =
-    w.temp + "°C";
-
-  document.querySelector("#heroPlace").textContent =
-    w.place;
-
-  document.querySelector("#currentTemp").textContent =
-    w.temp + "°C";
-
-  document.querySelector("#currentCondition").textContent =
-    w.condition;
-
-  document.querySelector("#weatherIcon").textContent =
-    w.icon;
-
-  document.querySelector("#humidity").textContent =
-    w.humidity + "%";
-
-  document.querySelector("#wind").textContent =
-    w.wind + " km/h";
-
-  document.querySelector("#rain").textContent =
-    w.rain + "%";
-
-  document.querySelector("#status").textContent =
-    `Showing demo conditions for ${w.place}. ` +
-    `AI recommendations update automatically.`;
-
-  document.querySelector("#cropList").innerHTML =
-    w.crops
-      .map(c => `<li>${c}</li>`)
-      .join("");
-
-
-  /* Forecast */
-
-  const days = [
-    "Today",
-    "Thu",
-    "Fri",
-    "Sat"
-  ];
-
-  document.querySelector("#forecast").innerHTML =
-    days.map((d, i) => {
-
-      const icons = [
-        w.icon,
-        "🌦️",
-        "☀️",
-        "🌤️"
-      ];
-
-      return `
-        <article class="forecast-card">
-
-          <div class="day">
-            ${d}
-          </div>
-
-          <div class="weather">
-            ${icons[i]}
-          </div>
-
-          <div class="temp">
-            ${w.temp + i - 1}°C
-          </div>
-
-          <small>
-            ${Math.max(10, w.rain + i * 8)}% rain
-          </small>
-
-        </article>
-      `;
-
-    }).join("");
-
-
-  /* Alerts */
-
-  document.querySelector("#alerts").innerHTML = `
-
-    <div class="alert">
-
-      <b>
-        ${w.rain > 50
-          ? "Heavy rain watch"
-          : "Rain watch"}
-      </b>
-
-      <span>
-        ${w.rain}% precipitation probability.
-        Plan field work accordingly.
-      </span>
-
-    </div>
-
-
-    <div class="alert">
-
-      <b>Wind check</b>
-
-      <span>
-        ${
-          w.wind > 18
-            ? "Higher winds detected. Avoid spraying."
-            : "Conditions suitable for routine field inspection."
-        }
-      </span>
-
-    </div>
-
-  `;
-
-
-  /* AI */
-
-  updateAI(w);
-}
-
-
-/* =========================
-   SEARCH
-========================= */
-
-const searchButton =
-  document.querySelector("#searchBtn");
-
-const locationInput =
-  document.querySelector("#locationInput");
-
-
-searchButton.addEventListener("click", () => {
-
-  const location =
-    locationInput.value.trim() || "Lagos";
-
-  searchButton.classList.add("loading");
-
-  setTimeout(() => {
-
-    render(location);
-
-    searchButton.classList.remove("loading");
-
-  }, 700);
-
-});
-
-
-locationInput.addEventListener("keydown", e => {
-
-  if (e.key === "Enter") {
-    searchButton.click();
+    return;
   }
 
-});
+  /* ---------- LOADING STATE ---------- */
 
+  if (elements.searchBtn) {
+    elements.searchBtn.disabled = true;
+    elements.searchBtn.classList.add("loading");
+    elements.searchBtn.textContent = "Checking...";
+  }
 
-/* =========================
-   MOBILE MENU
-========================= */
+  if (elements.status) {
+    elements.status.textContent =
+      `Loading live weather for ${searchPlace}...`;
+  }
 
-document
-  .querySelector(".menu")
-  .addEventListener("click", () => {
+  if (elements.forecast) {
+    elements.forecast.innerHTML =
+      "<p>Loading live forecast...</p>";
+  }
 
-    const nav =
-      document.querySelector(".topbar nav");
+  if (elements.aiStatus) {
+    elements.aiStatus.textContent =
+      "AI is analyzing weather conditions";
+  }
 
-    nav.style.display =
-      nav.style.display === "flex"
-        ? "none"
-        : "flex";
+  try {
+    /* ---------- FIND LOCATION ---------- */
 
-    nav.style.flexDirection = "column";
-    nav.style.position = "absolute";
-    nav.style.top = "65px";
-    nav.style.right = "6%";
-    nav.style.background = "#fff";
-    nav.style.padding = "18px";
-    nav.style.borderRadius = "12px";
-    nav.style.boxShadow =
-      "0 15px 40px rgba(0,0,0,.12)";
-  });
+    const location =
+      await geocodeLocation(searchPlace);
 
+    /* ---------- GET WEATHER ---------- */
 
-/* =========================
-   CONTACT FORM
-========================= */
+    const weather =
+      await getWeather(
+        location.latitude,
+        location.longitude
+      );
 
-document
-  .querySelector("#contactForm")
-  .addEventListener("submit", e => {
+    /* ---------- RENDER ---------- */
 
-    e.preventDefault();
+    renderWeather(
+      weather,
+      location
+    );
 
-    document.querySelector("#formMsg").textContent =
-      "Thanks! Your message has been received in this demo.";
+    /* ---------- STATUS ---------- */
 
-    e.target.reset();
+    if (elements.status) {
+      const locationText =
+        location.country
+          ? `${location.name}, ${location.country}`
+          : location.name;
 
-  });
+      elements.status.textContent =
+        `Live weather updated for ${locationText}.`;
+    }
 
+  } catch (error) {
+    console.error(
+      "AgroSky weather error:",
+      error
+    );
 
-/* =========================
-   AUTO UPDATE SYSTEM
-========================= */
+    if (elements.status) {
+      elements.status.textContent =
+        error.message ||
+        "Unable to load weather information.";
+    }
 
-let currentLocation = "Lagos";
+    if (elements.forecast) {
+      elements.forecast.innerHTML = `
+        <div class="weather-error">
+          <strong>Unable to load forecast.</strong>
+          <p>
+            Please check your internet connection
+            and try searching again.
+          </p>
+        </div>
+      `;
+    }
 
-function autoUpdate() {
+    if (elements.aiAdvice) {
+      elements.aiAdvice.textContent =
+        "Weather data could not be loaded. Please try the search again.";
+    }
 
-  const weather =
-    findWeather(currentLocation);
+    if (elements.aiStatus) {
+      elements.aiStatus.textContent =
+        "Waiting for live weather data";
+    }
 
-  /*
-   * Simulate small environmental changes.
-   * Replace this function with a real weather API
-   * when deploying the production version.
-   */
+  } finally {
+    /* ---------- RESTORE BUTTON ---------- */
 
-  weather.temp +=
-    Math.floor(Math.random() * 3) - 1;
-
-  weather.humidity = Math.max(
-    20,
-    Math.min(
-      95,
-      weather.humidity +
-      Math.floor(Math.random() * 5) - 2
-    )
-  );
-
-  weather.wind = Math.max(
-    4,
-    weather.wind +
-    Math.floor(Math.random() * 5) - 2
-  );
-
-  weather.rain = Math.max(
-    5,
-    Math.min(
-      95,
-      weather.rain +
-      Math.floor(Math.random() * 9) - 4
-    )
-  );
-
-  render(currentLocation);
-
+    if (elements.searchBtn) {
+      elements.searchBtn.disabled = false;
+      elements.searchBtn.classList.remove("loading");
+      elements.searchBtn.textContent = "Check Weather";
+    }
+  }
 }
 
 
-/* Refresh every 60 seconds */
+/* =========================================================
+   SEARCH FORM
+   ========================================================= */
 
-setInterval(autoUpdate, 60000);
+if (elements.searchBtn) {
+  elements.searchBtn.addEventListener(
+    "click",
+    () => {
+      searchWeather(
+        elements.locationInput?.value || "Lagos"
+      );
+    }
+  );
+}
 
 
-/* Initial load */
+if (elements.locationInput) {
+  elements.locationInput.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
 
-render("Lagos");
+        searchWeather(
+          elements.locationInput.value
+        );
+      }
+    }
+  );
+}
+
+
+/* =========================================================
+   MOBILE MENU
+   ========================================================= */
+
+if (elements.menuBtn && elements.nav) {
+  elements.menuBtn.addEventListener(
+    "click",
+    () => {
+      elements.nav.classList.toggle("active");
+    }
+  );
+}
+
+
+/* =========================================================
+   CLOSE MOBILE MENU AFTER CLICKING NAV LINK
+   ========================================================= */
+
+if (elements.nav) {
+  const navLinks =
+    elements.nav.querySelectorAll("a");
+
+  navLinks.forEach((link) => {
+    link.addEventListener(
+      "click",
+      () => {
+        elements.nav.classList.remove("active");
+      }
+    );
+  });
+}
+
+
+/* =========================================================
+   CONTACT FORM
+   ========================================================= */
+
+if (elements.contactForm) {
+  elements.contactForm.addEventListener(
+    "submit",
+    (event) => {
+      event.preventDefault();
+
+      if (elements.formMsg) {
+        elements.formMsg.textContent =
+          "Thank you! Your message has been received.";
+      }
+
+      elements.contactForm.reset();
+    }
+  );
+}
+
+
+/* =========================================================
+   INITIAL WEATHER LOAD
+   ========================================================= */
+
+document.addEventListener(
+  "DOMContentLoaded",
+  () => {
+    searchWeather("Lagos");
+  }
+);
