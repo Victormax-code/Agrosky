@@ -7,6 +7,17 @@ const API_BASE = "https://api.open-meteo.com/v1/forecast";
 const GEO_BASE = "https://geocoding-api.open-meteo.com/v1/search";
 
 /* =========================================================
+   AUTO WEATHER UPDATE
+   Refreshes the selected location automatically every 10 minutes
+   ========================================================= */
+
+const AUTO_UPDATE_INTERVAL = 10 * 60 * 1000;
+let autoUpdateTimer = null;
+let autoUpdateInProgress = false;
+
+
+
+/* =========================================================
    ELEMENTS
    ========================================================= */
 
@@ -289,32 +300,23 @@ async function geocodeLocation(place) {
 
 async function getWeather(latitude, longitude) {
   const params = new URLSearchParams({
-    latitude: latitude,
-    longitude: longitude,
+    latitude,
+    longitude,
 
     current:
-      "temperature_2m," +
-      "relative_humidity_2m," +
-      "apparent_temperature," +
-      "precipitation," +
-      "rain," +
-      "weather_code," +
-      "wind_speed_10m",
+      "temperature_2m,relative_humidity_2m,apparent_temperature," +
+      "precipitation,weather_code,wind_speed_10m",
 
     hourly:
-      "temperature_2m," +
-      "precipitation_probability," +
-      "weather_code",
+      "temperature_2m,precipitation_probability,precipitation," +
+      "weather_code,relative_humidity_2m,wind_speed_10m",
 
     daily:
-      "weather_code," +
-      "temperature_2m_max," +
-      "temperature_2m_min," +
-      "precipitation_probability_max," +
-      "precipitation_sum",
+      "weather_code,temperature_2m_max,temperature_2m_min," +
+      "precipitation_sum,precipitation_probability_max," +
+      "wind_speed_10m_max",
 
     timezone: "auto",
-
     forecast_days: "7"
   });
 
@@ -327,7 +329,7 @@ async function getWeather(latitude, longitude) {
   } catch (error) {
     if (error.name === "AbortError") {
       throw new Error(
-        "Weather request timed out. Please try again."
+        "Weather request timed out. Please check your internet connection."
       );
     }
 
@@ -346,7 +348,7 @@ async function getWeather(latitude, longitude) {
 
   if (!data || !data.current) {
     throw new Error(
-      "The weather service returned incomplete information."
+      "Weather data is currently unavailable."
     );
   }
 
@@ -355,354 +357,61 @@ async function getWeather(latitude, longitude) {
 
 
 /* =========================================================
-   CROP RECOMMENDATIONS
+   WEATHER DATA HELPERS
    ========================================================= */
 
-function getCropSuggestions(weather) {
-  const temperature =
-    weather?.current?.temperature_2m ?? 0;
+function getCurrentWeatherData(weather) {
+  const current = weather.current || {};
 
+  return {
+    temperature: current.temperature_2m,
+    humidity: current.relative_humidity_2m,
+    apparentTemperature: current.apparent_temperature,
+    precipitation: current.precipitation,
+    weatherCode: current.weather_code,
+    windSpeed: current.wind_speed_10m
+  };
+}
+
+
+function getDailyWeatherData(weather) {
+  const daily = weather.daily || {};
+
+  const dates = daily.time || [];
+  const codes = daily.weather_code || [];
+  const maxTemps = daily.temperature_2m_max || [];
+  const minTemps = daily.temperature_2m_min || [];
+  const precipitation = daily.precipitation_sum || [];
   const rainProbability =
-    weather?.daily?.precipitation_probability_max?.[0] ?? 0;
+    daily.precipitation_probability_max || [];
+  const wind = daily.wind_speed_10m_max || [];
 
-  const crops = [];
-
-  if (temperature >= 24 && temperature <= 34) {
-    crops.push("🌽 Maize");
-  }
-
-  if (temperature >= 22 && temperature <= 35) {
-    crops.push("🌱 Cassava");
-  }
-
-  if (temperature >= 23 && temperature <= 34) {
-    crops.push("🥬 Okra");
-  }
-
-  if (temperature >= 20 && temperature <= 32) {
-    crops.push("🍅 Tomato");
-  }
-
-  if (crops.length === 0) {
-    crops.push("🌱 Cassava");
-    crops.push("🌽 Maize");
-  }
-
-  if (rainProbability > 60) {
-    crops.push("🥒 Water-friendly crops");
-  }
-
-  return crops.slice(0, 5);
+  return dates.map((date, index) => ({
+    date,
+    weatherCode: codes[index],
+    maxTemperature: maxTemps[index],
+    minTemperature: minTemps[index],
+    precipitation: precipitation[index],
+    rainProbability: rainProbability[index],
+    windSpeed: wind[index]
+  }));
 }
 
 
-/* =========================================================
-   FARMING TIPS
-   ========================================================= */
-
-function getFarmingTips(weather) {
-  const current = weather?.current || {};
-  const daily = weather?.daily || {};
-
-  const humidity =
-    current.relative_humidity_2m ?? 0;
-
-  const wind =
-    current.wind_speed_10m ?? 0;
-
-  const rainProbability =
-    daily.precipitation_probability_max?.[0] ?? 0;
-
-  const tips = [];
-
-  if (humidity >= 75) {
-    tips.push(
-      "Monitor soil moisture closely because humidity is high."
-    );
-  } else {
-    tips.push(
-      "Check soil moisture before deciding when to irrigate."
-    );
-  }
-
-  if (rainProbability >= 50) {
-    tips.push(
-      "Rain is possible, so consider delaying spraying or fertilizer application."
-    );
-
-    tips.push(
-      "Check drainage around low-lying parts of the farm."
-    );
-  } else {
-    tips.push(
-      "Plan irrigation according to soil moisture and crop needs."
-    );
-  }
-
-  if (wind >= 20) {
-    tips.push(
-      "Strong winds are possible. Avoid spraying during windy conditions."
-    );
-  } else {
-    tips.push(
-      "Weather conditions are suitable for routine field observation."
-    );
-  }
-
-  return tips.slice(0, 4);
-}
-
-
-/* =========================================================
-   FARM ALERTS
-   ========================================================= */
-
-function getFarmAlerts(weather) {
-  const current = weather?.current || {};
-  const daily = weather?.daily || {};
-
-  const rainProbability =
-    daily.precipitation_probability_max?.[0] ?? 0;
-
-  const wind =
-    current.wind_speed_10m ?? 0;
-
-  const temperature =
-    current.temperature_2m ?? 0;
-
-  const alerts = [];
-
-  if (rainProbability >= 70) {
-    alerts.push({
-      title: "Rain watch",
-      text:
-        "High rain probability. Protect harvested produce and check drainage."
-    });
-  } else if (rainProbability >= 40) {
-    alerts.push({
-      title: "Rain possible",
-      text:
-        "Moderate rain probability. Monitor the forecast before major field activities."
-    });
-  } else {
-    alerts.push({
-      title: "Low rain risk",
-      text:
-        "Rain probability is currently low. Continue monitoring soil moisture."
-    });
-  }
-
-  if (wind >= 25) {
-    alerts.push({
-      title: "Wind alert",
-      text:
-        "Strong winds are possible. Take care with spraying and exposed crops."
-    });
-  } else {
-    alerts.push({
-      title: "Field check",
-      text:
-        "Review crops, soil moisture and drainage during your routine field inspection."
-    });
-  }
-
-  if (temperature >= 35) {
-    alerts.push({
-      title: "Heat watch",
-      text:
-        "High temperatures are expected. Monitor crops and water availability."
-    });
-  }
-
-  return alerts;
-}
-
-
-/* =========================================================
-   UPDATE FARMING ASSISTANT
-   ========================================================= */
-
-function updateAssistant(weather) {
-  const crops = getCropSuggestions(weather);
-  const tips = getFarmingTips(weather);
-  const alerts = getFarmAlerts(weather);
-
-  /* ---------- CROPS ---------- */
-
-  if (elements.cropList) {
-    elements.cropList.innerHTML = "";
-
-    crops.forEach((crop) => {
-      const li = document.createElement("li");
-      li.textContent = crop;
-      elements.cropList.appendChild(li);
-    });
-  }
-
-  /* ---------- TIPS ---------- */
-
-  if (elements.tipsList) {
-    elements.tipsList.innerHTML = "";
-
-    tips.forEach((tip) => {
-      const li = document.createElement("li");
-      li.textContent = tip;
-      elements.tipsList.appendChild(li);
-    });
-  }
-
-  /* ---------- ALERTS ---------- */
-
-  if (elements.alerts) {
-    elements.alerts.innerHTML = "";
-
-    alerts.forEach((alert) => {
-      const item = document.createElement("div");
-
-      item.className = "alert-item";
-
-      item.innerHTML = `
-        <strong>${alert.title}</strong>
-        <p>${alert.text}</p>
-      `;
-
-      elements.alerts.appendChild(item);
-    });
-  }
-}
-
-
-/* =========================================================
-   AI FARMING ADVICE
-   ========================================================= */
-
-function updateAIAdvice(weather, location) {
-  if (!elements.aiAdvice) {
-    return;
-  }
-
-  const current = weather?.current || {};
-  const daily = weather?.daily || {};
-
-  const temperature =
-    Math.round(current.temperature_2m ?? 0);
-
-  const humidity =
-    current.relative_humidity_2m ?? 0;
-
-  const wind =
-    Math.round(current.wind_speed_10m ?? 0);
-
-  const rainProbability =
-    daily.precipitation_probability_max?.[0] ?? 0;
-
-  let advice = "";
-
-  if (rainProbability >= 70) {
-    advice =
-      `For ${location.name}, rain probability is high today. ` +
-      `Prioritize drainage checks, protect harvested crops, ` +
-      `and avoid unnecessary spraying before rainfall.`;
-  } else if (temperature >= 35) {
-    advice =
-      `Conditions in ${location.name} are hot. ` +
-      `Monitor soil moisture, provide irrigation where needed, ` +
-      `and watch crops for heat stress.`;
-  } else if (wind >= 25) {
-    advice =
-      `Wind speeds are elevated around ${location.name}. ` +
-      `Avoid spraying during strong winds and inspect exposed crops.`;
-  } else {
-    advice =
-      `Conditions around ${location.name} look suitable for routine ` +
-      `farm activities. Check soil moisture, inspect crops, and use ` +
-      `the latest forecast before making major field decisions.`;
-  }
-
-  elements.aiAdvice.textContent = advice;
-
-  if (elements.aiStatus) {
-    elements.aiStatus.textContent =
-      "AI farming advice updated from current weather";
-  }
-
-  if (elements.aiBadge) {
-    elements.aiBadge.textContent =
-      "✨ AI Assistant: Monitoring your farm conditions";
-  }
-}
-
-
-/* =========================================================
-   RENDER FORECAST
-   ========================================================= */
-
-function renderForecast(weather) {
-  if (!elements.forecast) {
-    return;
-  }
-
-  const daily = weather?.daily;
+function getTodayRainProbability(weather) {
+  const daily = weather.daily || {};
+  const probabilities =
+    daily.precipitation_probability_max || [];
 
   if (
-    !daily ||
-    !daily.time ||
-    daily.time.length === 0
+    probabilities.length === 0 ||
+    probabilities[0] === null ||
+    probabilities[0] === undefined
   ) {
-    elements.forecast.innerHTML =
-      "<p>Forecast information is currently unavailable.</p>";
-
-    return;
+    return 0;
   }
 
-  elements.forecast.innerHTML = "";
-
-  daily.time.forEach((date, index) => {
-    const weatherCode =
-      daily.weather_code?.[index];
-
-    const description =
-      getWeatherDescription(weatherCode);
-
-    const max =
-      daily.temperature_2m_max?.[index];
-
-    const min =
-      daily.temperature_2m_min?.[index];
-
-    const rain =
-      daily.precipitation_probability_max?.[index] ?? 0;
-
-    const card = document.createElement("div");
-
-    card.className = "forecast-card";
-
-    card.innerHTML = `
-      <div class="forecast-date">
-        ${formatDate(date)}
-      </div>
-
-      <div class="forecast-icon">
-        ${description.icon}
-      </div>
-
-      <div class="forecast-condition">
-        ${description.text}
-      </div>
-
-      <div class="forecast-temp">
-        ${formatTemperature(max)}
-        /
-        ${formatTemperature(min)}
-      </div>
-
-      <div class="forecast-rain">
-        💧 ${rain}% rain
-      </div>
-    `;
-
-    elements.forecast.appendChild(card);
-  });
+  return Number(probabilities[0]);
 }
 
 
@@ -710,42 +419,37 @@ function renderForecast(weather) {
    RENDER CURRENT WEATHER
    ========================================================= */
 
-function renderWeather(weather, location) {
-  // Save the latest live weather for AgroSky AI
-  window.agroSkyWeather = weather;
-  window.agroSkyLocation = location;
+function renderCurrentWeather(weather, location) {
+  const current = getCurrentWeatherData(weather);
+  const description = getWeatherDescription(
+    current.weatherCode
+  );
 
-  const current = weather?.current;
+  const temperature = formatTemperature(
+    current.temperature
+  );
 
-  if (!current) {
-    throw new Error(
-      "Current weather data is unavailable."
-    );
+  const humidityText =
+    current.humidity === null ||
+    current.humidity === undefined
+      ? "--"
+      : `${Math.round(current.humidity)}%`;
+
+  const windText =
+    current.windSpeed === null ||
+    current.windSpeed === undefined
+      ? "--"
+      : `${Math.round(current.windSpeed)} km/h`;
+
+  const rainProbability = getTodayRainProbability(weather);
+
+  const placeText = location.country
+    ? `${location.name}, ${location.country}`
+    : location.name;
+
+  if (elements.heroIcon) {
+    elements.heroIcon.textContent = description.icon;
   }
-
-  const description =
-    getWeatherDescription(
-      current.weather_code
-    );
-
-  const temperature =
-    formatTemperature(
-      current.temperature_2m
-    );
-
-  const humidity =
-    current.relative_humidity_2m ?? "--";
-
-  const wind =
-    current.wind_speed_10m ?? "--";
-
-  const rain =
-    weather?.daily?.precipitation_probability_max?.[0] ?? 0;
-
-
-  /* =======================================================
-     HERO
-     ======================================================= */
 
   if (elements.heroTemp) {
     elements.heroTemp.textContent = temperature;
@@ -757,24 +461,13 @@ function renderWeather(weather, location) {
   }
 
   if (elements.heroPlace) {
-    elements.heroPlace.textContent =
-      location.name;
+    elements.heroPlace.textContent = placeText;
   }
 
   if (elements.heroMetrics) {
     elements.heroMetrics.textContent =
-      `Humidity ${humidity}% • Wind ${Math.round(wind)} km/h`;
+      `Humidity ${humidityText} • Wind ${windText}`;
   }
-
-  if (elements.heroIcon) {
-    elements.heroIcon.textContent =
-      description.icon;
-  }
-
-
-  /* =======================================================
-     DASHBOARD
-     ======================================================= */
 
   if (elements.weatherIcon) {
     elements.weatherIcon.textContent =
@@ -793,79 +486,1049 @@ function renderWeather(weather, location) {
 
   if (elements.humidity) {
     elements.humidity.textContent =
-      `${humidity}%`;
+      humidityText;
   }
 
   if (elements.wind) {
     elements.wind.textContent =
-      `${Math.round(wind)} km/h`;
+      windText;
   }
 
   if (elements.rain) {
     elements.rain.textContent =
-      `${rain}%`;
+      `${rainProbability}%`;
   }
-
-
-  /* =======================================================
-     OTHER SECTIONS
-     ======================================================= */
-
-  renderForecast(weather);
-
-  updateAssistant(weather);
-
-  updateAIAdvice(weather, location);
 }
 
 
 /* =========================================================
-   SEARCH WEATHER
+   FORECAST RENDERING
+   ========================================================= */
+
+function renderForecast(weather) {
+  if (!elements.forecast) {
+    return;
+  }
+
+  const daily = getDailyWeatherData(weather);
+
+  if (!daily.length) {
+    elements.forecast.innerHTML =
+      `<div class="loading-card">
+        Forecast data is currently unavailable.
+      </div>`;
+
+    return;
+  }
+
+  elements.forecast.innerHTML = daily
+    .map((day, index) => {
+      const description =
+        getWeatherDescription(day.weatherCode);
+
+      const maxTemp =
+        formatTemperature(day.maxTemperature);
+
+      const minTemp =
+        formatTemperature(day.minTemperature);
+
+      const rain =
+        day.rainProbability === null ||
+        day.rainProbability === undefined
+          ? "--"
+          : `${Math.round(day.rainProbability)}%`;
+
+      const precipitation =
+        day.precipitation === null ||
+        day.precipitation === undefined
+          ? "--"
+          : `${Number(day.precipitation).toFixed(1)} mm`;
+
+      const wind =
+        day.windSpeed === null ||
+        day.windSpeed === undefined
+          ? "--"
+          : `${Math.round(day.windSpeed)} km/h`;
+
+      const dayName =
+        index === 0
+          ? "Today"
+          : formatDate(day.date);
+
+      return `
+        <article class="forecast-card">
+          <div class="forecast-day">
+            ${dayName}
+          </div>
+
+          <div class="forecast-icon">
+            ${description.icon}
+          </div>
+
+          <div class="forecast-condition">
+            ${description.text}
+          </div>
+
+          <div class="forecast-temperature">
+            <strong>${maxTemp}</strong>
+            <span>${minTemp}</span>
+          </div>
+
+          <div class="forecast-details">
+            <span>🌧️ ${rain}</span>
+            <span>💧 ${precipitation}</span>
+            <span>💨 ${wind}</span>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+
+/* =========================================================
+   FARMING RECOMMENDATIONS
+   ========================================================= */
+
+function getFarmingRecommendations(weather) {
+  const current = getCurrentWeatherData(weather);
+  const daily = getDailyWeatherData(weather);
+
+  const temperature = Number(current.temperature);
+  const humidity = Number(current.humidity);
+  const wind = Number(current.windSpeed);
+  const rainProbability =
+    getTodayRainProbability(weather);
+
+  const today = daily[0] || {};
+
+  const recommendations = [];
+  const crops = [];
+  const tips = [];
+  const alerts = [];
+
+  /* -------------------------------------------------------
+     Temperature-based guidance
+     ------------------------------------------------------- */
+
+  if (temperature >= 32) {
+    recommendations.push(
+      "High temperatures may increase crop water demand. Check soil moisture and irrigate where necessary."
+    );
+
+    tips.push(
+      "Inspect crops for heat stress during the hottest part of the day."
+    );
+
+    alerts.push({
+      title: "Heat watch",
+      text:
+        "High temperatures are possible. Monitor soil moisture and young plants."
+    });
+  } else if (temperature <= 20) {
+    recommendations.push(
+      "Cooler conditions may slow crop growth. Monitor sensitive crops and avoid unnecessary disturbance."
+    );
+
+    tips.push(
+      "Protect temperature-sensitive seedlings and young crops."
+    );
+  } else {
+    recommendations.push(
+      "Current temperatures are within a generally workable range for many field activities."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Rain-based guidance
+     ------------------------------------------------------- */
+
+  if (rainProbability >= 70) {
+    recommendations.push(
+      "Rain is likely. Delay spraying where possible and make sure field drainage is clear."
+    );
+
+    tips.push(
+      "Check drainage channels before expected rainfall."
+    );
+
+    alerts.push({
+      title: "Rain watch",
+      text:
+        `Today's rain probability is ${Math.round(
+          rainProbability
+        )}%. Plan field activities around rainfall.`
+    });
+  } else if (rainProbability >= 40) {
+    recommendations.push(
+      "There is a moderate chance of rain. Check the forecast before spraying, fertilizing, or harvesting."
+    );
+
+    tips.push(
+      "Keep an eye on changing cloud conditions before beginning outdoor work."
+    );
+  } else {
+    recommendations.push(
+      "Rain probability is relatively low. Conditions may be suitable for planned field activities, depending on soil conditions."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Wind-based guidance
+     ------------------------------------------------------- */
+
+  if (wind >= 25) {
+    recommendations.push(
+      "Strong winds may affect spraying and delicate crops. Consider postponing sensitive operations."
+    );
+
+    alerts.push({
+      title: "Wind watch",
+      text:
+        `Maximum wind conditions may reach about ${Math.round(
+          wind
+        )} km/h. Protect vulnerable crops and review spraying plans.`
+    });
+  } else if (wind >= 15) {
+    recommendations.push(
+      "Moderate winds are present. Use care when spraying and monitor lightweight plants."
+    );
+  } else {
+    tips.push(
+      "Lower wind conditions can be more suitable for careful spraying operations."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Humidity guidance
+     ------------------------------------------------------- */
+
+  if (humidity >= 85) {
+    recommendations.push(
+      "High humidity can keep leaves wet for longer and may increase disease pressure in some crops."
+    );
+
+    tips.push(
+      "Inspect leaves and stems regularly for signs of fungal or bacterial disease."
+    );
+  } else if (humidity <= 40) {
+    recommendations.push(
+      "Lower humidity can increase moisture loss from soil and plants."
+    );
+
+    tips.push(
+      "Check soil moisture before deciding whether additional irrigation is needed."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Crop suggestions
+     ------------------------------------------------------- */
+
+  if (
+    temperature >= 24 &&
+    temperature <= 34
+  ) {
+    crops.push(
+      "Maize",
+      "Cassava",
+      "Okra",
+      "Tomato"
+    );
+  } else if (temperature < 24) {
+    crops.push(
+      "Vegetables",
+      "Beans",
+      "Leafy greens"
+    );
+  } else {
+    crops.push(
+      "Cassava",
+      "Sweet potato",
+      "Heat-tolerant vegetables"
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     General tips
+     ------------------------------------------------------- */
+
+  tips.push(
+    "Check soil moisture before irrigation instead of relying only on air temperature."
+  );
+
+  tips.push(
+    "Use local field observations together with weather information before making major farm decisions."
+  );
+
+  if (
+    today.precipitation !== null &&
+    today.precipitation !== undefined &&
+    Number(today.precipitation) > 10
+  ) {
+    tips.push(
+      "Expected rainfall may provide useful soil moisture, but confirm actual field conditions before reducing irrigation."
+    );
+  }
+
+  return {
+    recommendations,
+    crops,
+    tips,
+    alerts
+  };
+}
+
+
+/* =========================================================
+   RENDER FARMING RECOMMENDATIONS
+   ========================================================= */
+
+function renderFarmingRecommendations(weather) {
+  const result =
+    getFarmingRecommendations(weather);
+
+  if (elements.farmingSummary) {
+    elements.farmingSummary.textContent =
+      result.recommendations.join(" ");
+  }
+
+  if (elements.cropList) {
+    elements.cropList.innerHTML =
+      result.crops
+        .map(
+          (crop) =>
+            `<li>${crop}</li>`
+        )
+        .join("");
+  }
+
+  if (elements.tipsList) {
+    elements.tipsList.innerHTML =
+      result.tips
+        .map(
+          (tip) =>
+            `<li>${tip}</li>`
+        )
+        .join("");
+  }
+
+  if (elements.alerts) {
+    if (!result.alerts.length) {
+      elements.alerts.innerHTML = `
+        <div class="alert-card">
+          <strong>Field check</strong>
+          <p>
+            No major weather alerts are currently detected.
+            Continue monitoring local field conditions.
+          </p>
+        </div>
+      `;
+    } else {
+      elements.alerts.innerHTML =
+        result.alerts
+          .map(
+            (alert) => `
+              <div class="alert-card">
+                <strong>${alert.title}</strong>
+                <p>${alert.text}</p>
+              </div>
+            `
+          )
+          .join("");
+    }
+  }
+}
+
+
+/* =========================================================
+   MAIN WEATHER RENDER FUNCTION
+   ========================================================= */
+
+function renderWeather(weather, location) {
+  renderCurrentWeather(
+    weather,
+    location
+  );
+
+  renderForecast(
+    weather
+  );
+
+  renderFarmingRecommendations(
+    weather
+  );
+
+  updateAIFromWeather(
+    weather,
+    location
+  );
+
+  window.agroSkyWeather =
+    weather;
+
+  window.agroSkyLocation =
+    location;
+}/* =========================================================
+   AI FARMING ASSISTANT
+   ========================================================= */
+
+function updateAIFromWeather(weather, location) {
+  if (!elements.aiAdvice && !elements.aiStatus) {
+    return;
+  }
+
+  const current = getCurrentWeatherData(weather);
+  const description = getWeatherDescription(
+    current.weatherCode
+  );
+
+  const rainProbability =
+    getTodayRainProbability(weather);
+
+  const temperature =
+    Number(current.temperature);
+
+  const humidity =
+    Number(current.humidity);
+
+  const wind =
+    Number(current.windSpeed);
+
+  const placeText = location.country
+    ? `${location.name}, ${location.country}`
+    : location.name;
+
+  let advice = "";
+
+  if (rainProbability >= 70) {
+    advice =
+      `For ${placeText}, ${description.text.toLowerCase()} ` +
+      `conditions are currently being monitored. With a ` +
+      `${Math.round(rainProbability)}% chance of rain today, ` +
+      `check drainage, avoid unnecessary spraying, and plan ` +
+      `field activities around rainfall.`;
+  } else if (temperature >= 32) {
+    advice =
+      `For ${placeText}, temperatures are currently high. ` +
+      `Monitor soil moisture, check crops for heat stress, ` +
+      `and consider irrigation when the soil actually needs it.`;
+  } else if (wind >= 25) {
+    advice =
+      `For ${placeText}, wind conditions may affect outdoor ` +
+      `farm operations. Be careful with spraying and monitor ` +
+      `young or vulnerable crops.`;
+  } else if (humidity >= 85) {
+    advice =
+      `For ${placeText}, humidity is currently high. ` +
+      `Inspect crops for disease symptoms and avoid keeping ` +
+      `foliage unnecessarily wet.`;
+  } else {
+    advice =
+      `For ${placeText}, current conditions are ` +
+      `${description.text.toLowerCase()} with a temperature ` +
+      `of ${Math.round(temperature)}°C. Continue monitoring ` +
+      `soil moisture, rainfall, wind, and crop conditions ` +
+      `before making field decisions.`;
+  }
+
+  if (elements.aiAdvice) {
+    elements.aiAdvice.textContent =
+      advice;
+  }
+
+  if (elements.aiStatus) {
+    elements.aiStatus.textContent =
+      "AI is monitoring the latest weather conditions";
+  }
+
+  if (elements.aiBadge) {
+    elements.aiBadge.textContent =
+      "✨ AgroSky: Live weather monitoring active";
+  }
+}
+
+
+/* =========================================================
+   AI QUESTION RESPONSE
+   ========================================================= */
+
+function generateAIResponse(question) {
+  const weather =
+    window.agroSkyWeather;
+
+  const location =
+    window.agroSkyLocation;
+
+  if (!weather || !location) {
+    return (
+      "I need live weather information before I can " +
+      "give you a weather-based answer. Search for a " +
+      "location first."
+    );
+  }
+
+  const current =
+    getCurrentWeatherData(weather);
+
+  const description =
+    getWeatherDescription(
+      current.weatherCode
+    );
+
+  const rainProbability =
+    getTodayRainProbability(weather);
+
+  const daily =
+    getDailyWeatherData(weather);
+
+  const temperature =
+    Number(current.temperature);
+
+  const humidity =
+    Number(current.humidity);
+
+  const wind =
+    Number(current.windSpeed);
+
+  const lowerQuestion =
+    String(question || "")
+      .toLowerCase()
+      .trim();
+
+  const placeText =
+    location.country
+      ? `${location.name}, ${location.country}`
+      : location.name;
+
+
+  /* -------------------------------------------------------
+     Empty question
+     ------------------------------------------------------- */
+
+  if (!lowerQuestion) {
+    return (
+      "Ask me something about the current weather, " +
+      "rain, wind, irrigation, spraying, planting, " +
+      "crops, or AgroSky."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Website questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("what is agrosky") ||
+    lowerQuestion.includes("what does agrosky do") ||
+    lowerQuestion.includes("about agrosky")
+  ) {
+    return (
+      "AgroSky is a weather and farming intelligence " +
+      "website designed to connect live weather information " +
+      "with practical farming guidance. It can show current " +
+      "conditions, forecast information, farming tips, " +
+      "weather alerts, and crop-related suggestions."
+    );
+  }
+
+
+  if (
+    lowerQuestion.includes("how does agrosky work") ||
+    lowerQuestion.includes("how do you work")
+  ) {
+    return (
+      "AgroSky searches for the location you enter, retrieves " +
+      "weather information for that location, displays the " +
+      "current conditions and forecast, and then uses those " +
+      "conditions to provide weather-aware farming guidance."
+    );
+  }
+
+
+  if (
+    lowerQuestion.includes("who made agrosky") ||
+    lowerQuestion.includes("who created agrosky")
+  ) {
+    return (
+      "This version of AgroSky is the website you are currently " +
+      "working on. The website contains its own weather-aware " +
+      "farming assistant and live weather interface."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Current weather questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("weather") ||
+    lowerQuestion.includes("temperature") ||
+    lowerQuestion.includes("hot") ||
+    lowerQuestion.includes("cold") ||
+    lowerQuestion.includes("condition")
+  ) {
+    return (
+      `The current weather for ${placeText} is ` +
+      `${description.text.toLowerCase()} with a temperature ` +
+      `of ${Math.round(temperature)}°C. Humidity is about ` +
+      `${Math.round(humidity)}% and wind speed is around ` +
+      `${Math.round(wind)} km/h.`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Rain questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("rain") ||
+    lowerQuestion.includes("raining")
+  ) {
+    if (rainProbability >= 70) {
+      return (
+        `Rain is a significant possibility in ${placeText} ` +
+        `today, with about a ${Math.round(rainProbability)}% ` +
+        `rain probability. Check drainage and plan outdoor ` +
+        `farm activities carefully.`
+      );
+    }
+
+    if (rainProbability >= 40) {
+      return (
+        `There is a moderate chance of rain in ${placeText} ` +
+        `today, currently around ${Math.round(rainProbability)}%. ` +
+        `Check the latest forecast before starting weather-sensitive ` +
+        `farm activities.`
+      );
+    }
+
+    return (
+      `The current rain probability for ${placeText} is about ` +
+      `${Math.round(rainProbability)}%. Rain is currently less ` +
+      `likely than under a high-rain scenario, but local conditions ` +
+      `can still change.`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Irrigation questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("irrigat") ||
+    lowerQuestion.includes("water my crop") ||
+    lowerQuestion.includes("water crops") ||
+    lowerQuestion.includes("watering")
+  ) {
+    if (rainProbability >= 70) {
+      return (
+        `Because rain is currently likely in ${placeText}, ` +
+        `check the soil before irrigating. You may not need ` +
+        `additional water if sufficient rainfall occurs.`
+      );
+    }
+
+    if (temperature >= 32) {
+      return (
+        `Conditions in ${placeText} are relatively hot. Check ` +
+        `soil moisture regularly and irrigate according to the ` +
+        `crop's needs rather than using a fixed schedule.`
+      );
+    }
+
+    return (
+      `For ${placeText}, check soil moisture before irrigation. ` +
+      `Weather information can help with planning, but the actual ` +
+      `soil condition and crop growth stage should guide the decision.`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Spraying questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("spray") ||
+    lowerQuestion.includes("spraying") ||
+    lowerQuestion.includes("pesticide") ||
+    lowerQuestion.includes("herbicide") ||
+    lowerQuestion.includes("fungicide")
+  ) {
+    if (rainProbability >= 60) {
+      return (
+        `Rain is currently fairly likely in ${placeText}. ` +
+        `Weather-sensitive spraying may need to be postponed, ` +
+        `because rainfall can affect application performance. ` +
+        `Always follow the product label and local agricultural guidance.`
+      );
+    }
+
+    if (wind >= 20) {
+      return (
+        `Wind is currently around ${Math.round(wind)} km/h in ` +
+        `${placeText}. Consider wind conditions carefully before ` +
+        `any spraying operation and follow the product label and ` +
+        `local agricultural guidance.`
+      );
+    }
+
+    return (
+      `Current weather conditions in ${placeText} do not show a ` +
+      `high rain probability. Still check the latest forecast and ` +
+      `wind conditions immediately before spraying, and always follow ` +
+      `the product label and applicable agricultural guidance.`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Planting questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("plant") ||
+    lowerQuestion.includes("planting") ||
+    lowerQuestion.includes("sow") ||
+    lowerQuestion.includes("sowing")
+  ) {
+    if (rainProbability >= 50) {
+      return (
+        `Rain may provide useful moisture around ${placeText}. ` +
+        `Before planting, check that the soil is workable and ` +
+        `not excessively waterlogged. Crop-specific planting ` +
+        `requirements should also be considered.`
+      );
+    }
+
+    return (
+      `Planting decisions in ${placeText} should consider soil ` +
+      `moisture, crop requirements, and the upcoming rainfall pattern. ` +
+      `The current weather alone should not determine the planting date.`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Harvest questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("harvest") ||
+    lowerQuestion.includes("harvesting")
+  ) {
+    if (rainProbability >= 60) {
+      return (
+        `Because rain is fairly likely in ${placeText}, review the ` +
+        `forecast before harvesting. If the crop is ready and conditions ` +
+        `allow, plan around rainfall to reduce weather-related problems.`
+      );
+    }
+
+    return (
+      `The current rain probability in ${placeText} is about ` +
+      `${Math.round(rainProbability)}%. If the crop is mature, ` +
+      `check the forecast and field conditions before harvesting.`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Wind questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("wind") ||
+    lowerQuestion.includes("windy")
+  ) {
+    return (
+      `The current wind speed in ${placeText} is about ` +
+      `${Math.round(wind)} km/h. ` +
+      `${
+        wind >= 25
+          ? "This is strong enough to warrant extra caution with spraying and vulnerable crops."
+          : wind >= 15
+            ? "This is moderate wind, so use care with spraying and delicate crops."
+            : "These are relatively light wind conditions."
+      }`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Humidity questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("humidity") ||
+    lowerQuestion.includes("humid")
+  ) {
+    return (
+      `Humidity in ${placeText} is currently around ` +
+      `${Math.round(humidity)}%. ` +
+      `${
+        humidity >= 85
+          ? "High humidity can increase moisture remaining on plant surfaces and may increase disease pressure for some crops."
+          : humidity <= 40
+            ? "Lower humidity can increase moisture loss from plants and soil."
+            : "Humidity is currently in a moderate range."
+      }`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Crop questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("crop") ||
+    lowerQuestion.includes("crops") ||
+    lowerQuestion.includes("grow")
+  ) {
+    const recommendations =
+      getFarmingRecommendations(weather);
+
+    return (
+      `Based on the current weather in ${placeText}, ` +
+      `AgroSky's general crop suggestions include ` +
+      `${recommendations.crops.join(", ")}. ` +
+      `These are weather-aware suggestions, not a guarantee ` +
+      `that a crop will perform well. Soil, season, variety, ` +
+      `farm location, and management practices also matter.`
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Forecast questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("forecast") ||
+    lowerQuestion.includes("tomorrow") ||
+    lowerQuestion.includes("next week") ||
+    lowerQuestion.includes("next few days")
+  ) {
+    if (daily.length >= 2) {
+      const tomorrow =
+        daily[1];
+
+      const tomorrowDescription =
+        getWeatherDescription(
+          tomorrow.weatherCode
+        );
+
+      return (
+        `The forecast for ${placeText} shows tomorrow as ` +
+        `${tomorrowDescription.text.toLowerCase()}, with a high ` +
+        `around ${Math.round(
+          tomorrow.maxTemperature
+        )}°C and a low around ${Math.round(
+          tomorrow.minTemperature
+        )}°C. Rain probability is about ` +
+        `${Math.round(
+          tomorrow.rainProbability || 0
+        )}%.`
+      );
+    }
+
+    return (
+      "The forecast data is currently unavailable."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Field activity questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("farm today") ||
+    lowerQuestion.includes("do today") ||
+    lowerQuestion.includes("field today") ||
+    lowerQuestion.includes("farm work")
+  ) {
+    const recommendations =
+      getFarmingRecommendations(weather);
+
+    return (
+      recommendations.recommendations
+        .slice(0, 3)
+        .join(" ")
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Help questions
+     ------------------------------------------------------- */
+
+  if (
+    lowerQuestion.includes("help") ||
+    lowerQuestion.includes("what can you do") ||
+    lowerQuestion.includes("what can i ask")
+  ) {
+    return (
+      "You can ask me about the current weather, temperature, " +
+      "rain probability, wind, humidity, irrigation, spraying, " +
+      "planting, harvesting, crops, field activities, forecasts, " +
+      "or how AgroSky works."
+    );
+  }
+
+
+  /* -------------------------------------------------------
+     Default response
+     ------------------------------------------------------- */
+
+  return (
+    `I can help you understand the weather in ${placeText} ` +
+    `and connect it with general farming guidance. Try asking ` +
+    `"Will it rain?", "Should I irrigate?", "Is it good for spraying?", ` +
+    `"What crops can I consider?", or "What is the forecast?"`
+  );
+}
+
+
+/* =========================================================
+   SEND AI MESSAGE
+   ========================================================= */
+
+function sendAIMessage(question) {
+  const response =
+    generateAIResponse(
+      question
+    );
+
+  if (elements.aiAdvice) {
+    elements.aiAdvice.textContent =
+      response;
+  }
+
+  if (elements.aiStatus) {
+    elements.aiStatus.textContent =
+      "AgroSky AI response generated from current weather";
+  }
+
+  return response;
+}
+
+
+/* =========================================================
+   AI INPUT SUPPORT
+   ========================================================= */
+
+function setupAIInteraction() {
+  const aiForm =
+    document.querySelector("#aiForm");
+
+  const aiInput =
+    document.querySelector("#aiInput");
+
+  const aiSendBtn =
+    document.querySelector("#aiSendBtn");
+
+  if (!aiForm || !aiInput) {
+    return;
+  }
+
+  aiForm.addEventListener(
+    "submit",
+    (event) => {
+      event.preventDefault();
+
+      const question =
+        aiInput.value.trim();
+
+      if (!question) {
+        if (elements.aiStatus) {
+          elements.aiStatus.textContent =
+            "Type a question first";
+        }
+
+        return;
+      }
+
+      sendAIMessage(
+        question
+      );
+
+      aiInput.value = "";
+      aiInput.focus();
+    }
+  );
+
+  if (aiSendBtn) {
+    aiSendBtn.addEventListener(
+      "click",
+      () => {
+        const question =
+          aiInput.value.trim();
+
+        if (!question) {
+          return;
+        }
+
+        sendAIMessage(
+          question
+        );
+
+        aiInput.value = "";
+        aiInput.focus();
+      }
+    );
+  }
+}
+
+
+/* =========================================================
+   SEARCH FORM
    ========================================================= */
 
 async function searchWeather(place) {
-  const searchPlace =
-    String(place || "").trim();
+  const searchTerm =
+    String(
+      place ||
+      elements.locationInput?.value ||
+      ""
+    ).trim();
 
-  if (!searchPlace) {
+  if (!searchTerm) {
     if (elements.status) {
       elements.status.textContent =
-        "Please enter a city or farming location.";
+        "Please enter a location.";
     }
 
     return;
   }
 
-  /* ---------- LOADING STATE ---------- */
-
   if (elements.searchBtn) {
     elements.searchBtn.disabled = true;
-    elements.searchBtn.classList.add("loading");
-    elements.searchBtn.textContent = "Checking...";
+    elements.searchBtn.textContent =
+      "Checking...";
   }
 
   if (elements.status) {
     elements.status.textContent =
-      `Loading live weather for ${searchPlace}...`;
-  }
-
-  if (elements.forecast) {
-    elements.forecast.innerHTML =
-      "<p>Loading live forecast...</p>";
-  }
-
-  if (elements.aiStatus) {
-    elements.aiStatus.textContent =
-      "AI is analyzing weather conditions";
+      `Loading live weather for ${searchTerm}...`;
   }
 
   try {
-    /* ---------- FIND LOCATION ---------- */
-
     const location =
-      await geocodeLocation(searchPlace);
-
-    /* ---------- GET WEATHER ---------- */
+      await geocodeLocation(
+        searchTerm
+      );
 
     const weather =
       await getWeather(
@@ -873,28 +1536,39 @@ async function searchWeather(place) {
         location.longitude
       );
 
-    /* ---------- RENDER ---------- */
+    window.agroSkyLocation =
+      location;
+
+    window.agroSkyWeather =
+      weather;
 
     renderWeather(
       weather,
       location
     );
 
-    /* ---------- STATUS ---------- */
-
     if (elements.status) {
-      const locationText =
+      const placeText =
         location.country
           ? `${location.name}, ${location.country}`
           : location.name;
 
+      const updatedTime =
+        new Date().toLocaleTimeString(
+          [],
+          {
+            hour: "2-digit",
+            minute: "2-digit"
+          }
+        );
+
       elements.status.textContent =
-        `Live weather updated for ${locationText}.`;
+        `Live weather loaded for ${placeText} at ${updatedTime}.`;
     }
 
   } catch (error) {
     console.error(
-      "AgroSky weather error:",
+      "AgroSky weather search error:",
       error
     );
 
@@ -904,53 +1578,23 @@ async function searchWeather(place) {
         "Unable to load weather information.";
     }
 
-    if (elements.forecast) {
-      elements.forecast.innerHTML = `
-        <div class="weather-error">
-          <strong>Unable to load forecast.</strong>
-          <p>
-            Please check your internet connection
-            and try searching again.
-          </p>
-        </div>
-      `;
+    if (elements.heroCondition) {
+      elements.heroCondition.textContent =
+        "Weather unavailable";
     }
 
-    if (elements.aiAdvice) {
-      elements.aiAdvice.textContent =
-        "Weather data could not be loaded. Please try the search again.";
-    }
-
-    if (elements.aiStatus) {
-      elements.aiStatus.textContent =
-        "Waiting for live weather data";
+    if (elements.currentCondition) {
+      elements.currentCondition.textContent =
+        "Unable to load weather";
     }
 
   } finally {
-    /* ---------- RESTORE BUTTON ---------- */
-
     if (elements.searchBtn) {
       elements.searchBtn.disabled = false;
-      elements.searchBtn.classList.remove("loading");
-      elements.searchBtn.textContent = "Check Weather";
+      elements.searchBtn.textContent =
+        "Check Weather";
     }
   }
-}
-
-
-/* =========================================================
-   SEARCH FORM
-   ========================================================= */
-
-if (elements.searchBtn) {
-  elements.searchBtn.addEventListener(
-    "click",
-    () => {
-      searchWeather(
-        elements.locationInput?.value || "Lagos"
-      );
-    }
-  );
 }
 
 
@@ -970,36 +1614,219 @@ if (elements.locationInput) {
 }
 
 
-/* =========================================================
-   MOBILE MENU
-   ========================================================= */
-
-if (elements.menuBtn && elements.nav) {
-  elements.menuBtn.addEventListener(
+if (elements.searchBtn) {
+  elements.searchBtn.addEventListener(
     "click",
     () => {
-      elements.nav.classList.toggle("active");
+      searchWeather(
+        elements.locationInput?.value
+      );
     }
   );
 }
 
 
 /* =========================================================
-   CLOSE MOBILE MENU AFTER CLICKING NAV LINK
+   AUTOMATIC WEATHER UPDATE
    ========================================================= */
 
-if (elements.nav) {
-  const navLinks =
-    elements.nav.querySelectorAll("a");
+async function refreshCurrentWeather() {
+  const location =
+    window.agroSkyLocation;
 
-  navLinks.forEach((link) => {
-    link.addEventListener(
-      "click",
-      () => {
-        elements.nav.classList.remove("active");
+  if (
+    !location ||
+    autoUpdateInProgress
+  ) {
+    return;
+  }
+
+  autoUpdateInProgress = true;
+
+  try {
+    if (elements.status) {
+      elements.status.textContent =
+        `Refreshing live weather for ${location.name}...`;
+    }
+
+    const weather =
+      await getWeather(
+        location.latitude,
+        location.longitude
+      );
+
+    renderWeather(
+      weather,
+      location
+    );
+
+    const updatedTime =
+      new Date().toLocaleTimeString(
+        [],
+        {
+          hour: "2-digit",
+          minute: "2-digit"
+        }
+      );
+
+    if (elements.status) {
+      const locationText =
+        location.country
+          ? `${location.name}, ${location.country}`
+          : location.name;
+
+      elements.status.textContent =
+        `Live weather updated for ${locationText} at ${updatedTime}.`;
+    }
+
+  } catch (error) {
+    console.error(
+      "AgroSky automatic weather update error:",
+      error
+    );
+
+    /* Keep the last successful weather on screen if refresh fails. */
+    if (elements.status) {
+      elements.status.textContent =
+        "Automatic weather refresh failed. Showing the last available weather.";
+    }
+
+  } finally {
+    autoUpdateInProgress = false;
+  }
+}
+
+
+function startAutoWeatherUpdates() {
+  if (autoUpdateTimer) {
+    clearInterval(
+      autoUpdateTimer
+    );
+  }
+
+  autoUpdateTimer =
+    setInterval(
+      refreshCurrentWeather,
+      AUTO_UPDATE_INTERVAL
+    );
+}
+
+
+/* =========================================================
+   MOBILE NAVIGATION
+   ========================================================= */
+
+function setupMobileNavigation() {
+  const menuButton =
+    elements.menuBtn;
+
+  const nav =
+    elements.nav;
+
+  if (!menuButton || !nav) {
+    return;
+  }
+
+  menuButton.addEventListener(
+    "click",
+    () => {
+      const isOpen =
+        nav.classList.toggle(
+          "open"
+        );
+
+      menuButton.setAttribute(
+        "aria-expanded",
+        String(isOpen)
+      );
+    }
+  );
+
+  const navLinks =
+    nav.querySelectorAll(
+      "a"
+    );
+
+  navLinks.forEach(
+    (link) => {
+      link.addEventListener(
+        "click",
+        () => {
+          nav.classList.remove(
+            "open"
+          );
+
+          menuButton.setAttribute(
+            "aria-expanded",
+            "false"
+          );
+        }
+      );
+    }
+  );
+}
+
+
+/* =========================================================
+   SCROLL REVEAL
+   ========================================================= */
+
+function setupScrollReveal() {
+  const revealElements =
+    document.querySelectorAll(
+      ".reveal, .feature-card, .forecast-card, " +
+      ".about-card, .gallery-card, .alert-card"
+    );
+
+  if (!revealElements.length) {
+    return;
+  }
+
+  if (
+    !("IntersectionObserver" in window)
+  ) {
+    revealElements.forEach(
+      (element) => {
+        element.classList.add(
+          "visible"
+        );
       }
     );
-  });
+
+    return;
+  }
+
+  const observer =
+    new IntersectionObserver(
+      (entries) => {
+        entries.forEach(
+          (entry) => {
+            if (
+              entry.isIntersecting
+            ) {
+              entry.target.classList.add(
+                "visible"
+              );
+
+              observer.unobserve(
+                entry.target
+              );
+            }
+          }
+        );
+      },
+      {
+        threshold: 0.12
+      }
+    );
+
+  revealElements.forEach(
+    (element) => {
+      observer.observe(
+        element
+      );
+    }
+  );
 }
 
 
@@ -1007,1098 +1834,576 @@ if (elements.nav) {
    CONTACT FORM
    ========================================================= */
 
-if (elements.contactForm) {
-  elements.contactForm.addEventListener(
+function setupContactForm() {
+  const form =
+    elements.contactForm;
+
+  if (!form) {
+    return;
+  }
+
+  form.addEventListener(
     "submit",
-    (event) => {
+    async (event) => {
       event.preventDefault();
 
-      if (elements.formMsg) {
-        elements.formMsg.textContent =
-          "Thank you! Your message has been received.";
+      const formMsg =
+        elements.formMsg;
+
+      const action =
+        form.getAttribute(
+          "action"
+        );
+
+      if (
+        !action ||
+        action.includes(
+          "YOUR_FORM_ID"
+        )
+      ) {
+        if (formMsg) {
+          formMsg.textContent =
+            "Contact form is not connected yet. Add your Formspree form ID to the form action.";
+        }
+
+        return;
       }
 
-      elements.contactForm.reset();
+      const submitButton =
+        form.querySelector(
+          'button[type="submit"]'
+        );
+
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent =
+          "Sending...";
+      }
+
+      if (formMsg) {
+        formMsg.textContent =
+          "Sending your message...";
+      }
+
+      try {
+        const formData =
+          new FormData(
+            form
+          );
+
+        const response =
+          await fetch(
+            action,
+            {
+              method: "POST",
+              body: formData,
+              headers: {
+                Accept:
+                  "application/json"
+              }
+            }
+          );
+
+        if (!response.ok) {
+          throw new Error(
+            "Unable to send message."
+          );
+        }
+
+        if (formMsg) {
+          formMsg.textContent =
+            "Message sent successfully. Thank you for contacting AgroSky.";
+        }
+
+        form.reset();
+
+      } catch (error) {
+        console.error(
+          "AgroSky contact form error:",
+          error
+        );
+
+        if (formMsg) {
+          formMsg.textContent =
+            "Your message could not be sent right now. Please try again later.";
+        }
+
+      } finally {
+        if (submitButton) {
+          submitButton.disabled =
+            false;
+
+          submitButton.textContent =
+            "Send Message";
+        }
+      }
     }
   );
 }
 
 
 /* =========================================================
-   INITIAL WEATHER LOAD
+   SMOOTH NAVIGATION FALLBACK
+   ========================================================= */
+
+function setupSmoothNavigation() {
+  const links =
+    document.querySelectorAll(
+      'a[href^="#"]'
+    );
+
+  links.forEach(
+    (link) => {
+      link.addEventListener(
+        "click",
+        (event) => {
+          const targetId =
+            link.getAttribute(
+              "href"
+            );
+
+          if (
+            !targetId ||
+            targetId === "#"
+          ) {
+            return;
+          }
+
+          const target =
+            document.querySelector(
+              targetId
+            );
+
+          if (!target) {
+            return;
+          }
+
+          event.preventDefault();
+
+          target.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+          });
+        }
+      );
+    }
+  );
+}
+
+
+/* =========================================================
+   HERO CARD FLOAT ANIMATION
+   ========================================================= */
+
+function setupHeroAnimation() {
+  const heroCard =
+    document.querySelector(
+      ".hero-card"
+    );
+
+  if (!heroCard) {
+    return;
+  }
+
+  let animationFrame =
+    null;
+
+  let targetX = 0;
+  let targetY = 0;
+
+  let currentX = 0;
+  let currentY = 0;
+
+  function animate() {
+    currentX +=
+      (targetX - currentX) *
+      0.08;
+
+    currentY +=
+      (targetY - currentY) *
+      0.08;
+
+    heroCard.style.transform =
+      `translate3d(${currentX}px, ${currentY}px, 0)`;
+
+    animationFrame =
+      requestAnimationFrame(
+        animate
+      );
+  }
+
+  heroCard.addEventListener(
+    "mousemove",
+    (event) => {
+      const rect =
+        heroCard.getBoundingClientRect();
+
+      const x =
+        event.clientX -
+        rect.left -
+        rect.width / 2;
+
+      const y =
+        event.clientY -
+        rect.top -
+        rect.height / 2;
+
+      targetX =
+        Math.max(
+          -6,
+          Math.min(
+            6,
+            x / 30
+          )
+        );
+
+      targetY =
+        Math.max(
+          -6,
+          Math.min(
+            6,
+            y / 30
+          )
+        );
+    }
+  );
+
+  heroCard.addEventListener(
+    "mouseleave",
+    () => {
+      targetX = 0;
+      targetY = 0;
+    }
+  );
+
+  animate();
+
+  window.addEventListener(
+    "beforeunload",
+    () => {
+      if (animationFrame) {
+        cancelAnimationFrame(
+          animationFrame
+        );
+      }
+    }
+  );
+}
+
+
+/* =========================================================
+   PAGE VISIBILITY HANDLING
+   ========================================================= */
+
+function setupVisibilityHandling() {
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (
+        document.visibilityState ===
+        "visible"
+      ) {
+        const location =
+          window.agroSkyLocation;
+
+        if (
+          location &&
+          !autoUpdateInProgress
+        ) {
+          refreshCurrentWeather();
+        }
+      }
+    }
+  );
+}
+
+
+/* =========================================================
+   ERROR HANDLING
+   ========================================================= */
+
+window.addEventListener(
+  "error",
+  (event) => {
+    console.error(
+      "AgroSky JavaScript error:",
+      event.error ||
+      event.message
+    );
+  }
+);
+
+
+window.addEventListener(
+  "unhandledrejection",
+  (event) => {
+    console.error(
+      "AgroSky promise error:",
+      event.reason
+    );
+  }
+);
+
+
+/* =========================================================
+   INITIALIZE APPLICATION
    ========================================================= */
 
 document.addEventListener(
   "DOMContentLoaded",
   () => {
-    searchWeather("Lagos");
-  }
-);
+    setupAIInteraction();
 
-/* =========================================================
-   AGROSKY AI - FIRST VERSION
-   Weather-aware farming assistant
-   ========================================================= */
+    setupMobileNavigation();
 
-(function createAgroSkyAI() {
+    setupScrollReveal();
 
-  /* -------------------------------------------------------
-     AI STATE
-     ------------------------------------------------------- */
+    setupContactForm();
 
-  let aiMessages = [
-    {
-      role: "ai",
-      text:
-        "Hello! 🌱 I'm AgroSky AI. I can help you understand your current weather conditions and make practical farming decisions."
-    }
-  ];
+    setupSmoothNavigation();
 
+    setupHeroAnimation();
 
-  /* -------------------------------------------------------
-     CREATE AI STYLES
-     ------------------------------------------------------- */
+    setupVisibilityHandling();
 
-  const aiStyle = document.createElement("style");
-
-  aiStyle.textContent = `
-    .agrosky-ai-button {
-      position: fixed;
-      right: 24px;
-      bottom: 24px;
-      z-index: 9999;
-      border: none;
-      border-radius: 50px;
-      padding: 15px 20px;
-      background: #17653c;
-      color: white;
-      font-size: 15px;
-      font-weight: 800;
-      cursor: pointer;
-      box-shadow: 0 12px 35px rgba(0,0,0,.18);
-      transition: .25s ease;
-    }
-
-    .agrosky-ai-button:hover {
-      transform: translateY(-3px);
-    }
-
-    .agrosky-ai-window {
-      position: fixed;
-      right: 24px;
-      bottom: 88px;
-      width: min(390px, calc(100vw - 30px));
-      height: 560px;
-      z-index: 9998;
-      background: white;
-      border-radius: 22px;
-      overflow: hidden;
-      box-shadow: 0 20px 60px rgba(0,0,0,.22);
-      display: none;
-      flex-direction: column;
-      border: 1px solid #e2ebe4;
-    }
-
-    .agrosky-ai-window.open {
-      display: flex;
-      animation: agroAIIn .25s ease;
-    }
-
-    @keyframes agroAIIn {
-      from {
-        opacity: 0;
-        transform: translateY(15px) scale(.97);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-      }
-    }
-
-    .agrosky-ai-header {
-      background: #123b28;
-      color: white;
-      padding: 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .agrosky-ai-title {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .agrosky-ai-title-icon {
-      width: 42px;
-      height: 42px;
-      border-radius: 50%;
-      background: rgba(255,255,255,.13);
-      display: grid;
-      place-items: center;
-      font-size: 20px;
-    }
-
-    .agrosky-ai-title strong {
-      display: block;
-      font-size: 16px;
-    }
-
-    .agrosky-ai-title small {
-      display: block;
-      opacity: .75;
-      margin-top: 2px;
-    }
-
-    .agrosky-ai-close {
-      border: none;
-      background: transparent;
-      color: white;
-      font-size: 23px;
-      cursor: pointer;
-    }
-
-    .agrosky-ai-messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 18px;
-      background: #f7faf7;
-    }
-
-    .agrosky-ai-message {
-      display: flex;
-      margin-bottom: 14px;
-    }
-
-    .agrosky-ai-message.user {
-      justify-content: flex-end;
-    }
-
-    .agrosky-ai-bubble {
-      max-width: 85%;
-      padding: 11px 14px;
-      border-radius: 15px;
-      font-size: 14px;
-      line-height: 1.55;
-      white-space: pre-line;
-    }
-
-    .agrosky-ai-message.ai .agrosky-ai-bubble {
-      background: white;
-      color: #173225;
-      border: 1px solid #e3ebe5;
-      border-bottom-left-radius: 4px;
-    }
-
-    .agrosky-ai-message.user .agrosky-ai-bubble {
-      background: #17653c;
-      color: white;
-      border-bottom-right-radius: 4px;
-    }
-
-    .agrosky-ai-suggestions {
-      display: flex;
-      gap: 7px;
-      padding: 10px 14px;
-      overflow-x: auto;
-      border-top: 1px solid #edf1ed;
-      background: white;
-    }
-
-    .agrosky-ai-suggestion {
-      flex: 0 0 auto;
-      border: 1px solid #d8e5dc;
-      background: #f8fbf8;
-      color: #17653c;
-      border-radius: 30px;
-      padding: 7px 11px;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .agrosky-ai-input {
-      display: flex;
-      gap: 8px;
-      padding: 12px;
-      background: white;
-      border-top: 1px solid #e5ebe6;
-    }
-
-    .agrosky-ai-input input {
-      flex: 1;
-      min-width: 0;
-      border: 1px solid #d8e2da;
-      border-radius: 12px;
-      padding: 11px 12px;
-      outline: none;
-      font: inherit;
-    }
-
-    .agrosky-ai-input input:focus {
-      border-color: #17653c;
-    }
-
-    .agrosky-ai-send {
-      width: 44px;
-      border: none;
-      border-radius: 12px;
-      background: #17653c;
-      color: white;
-      font-size: 18px;
-      cursor: pointer;
-    }
-
-    .agrosky-ai-typing {
-      font-size: 12px;
-      color: #6b7c71;
-      font-style: italic;
-      margin-bottom: 12px;
-    }
-
-    @media (max-width: 560px) {
-
-      .agrosky-ai-button {
-        right: 15px;
-        bottom: 15px;
-      }
-
-      .agrosky-ai-window {
-        right: 10px;
-        bottom: 75px;
-        width: calc(100vw - 20px);
-        height: 70vh;
-        max-height: 600px;
-      }
-    }
-  `;
-
-  document.head.appendChild(aiStyle);
-
-
-  /* -------------------------------------------------------
-     CREATE AI BUTTON
-     ------------------------------------------------------- */
-
-  const aiButton = document.createElement("button");
-
-  aiButton.className = "agrosky-ai-button";
-  aiButton.innerHTML = "✨ Ask AgroSky AI";
-
-  document.body.appendChild(aiButton);
-
-
-  /* -------------------------------------------------------
-     CREATE AI WINDOW
-     ------------------------------------------------------- */
-
-  const aiWindow = document.createElement("div");
-
-  aiWindow.className = "agrosky-ai-window";
-
-  aiWindow.innerHTML = `
-    <div class="agrosky-ai-header">
-
-      <div class="agrosky-ai-title">
-
-        <div class="agrosky-ai-title-icon">
-          🌱
-        </div>
-
-        <div>
-          <strong>AgroSky AI</strong>
-          <small>Weather & Farming Assistant</small>
-        </div>
-
-      </div>
-
-      <button
-        class="agrosky-ai-close"
-        aria-label="Close AgroSky AI"
-      >
-        ×
-      </button>
-
-    </div>
-
-    <div
-      class="agrosky-ai-messages"
-      id="agroskyAiMessages"
-    ></div>
-
-    <div class="agrosky-ai-suggestions">
-
-      <button class="agrosky-ai-suggestion">
-        Will it rain?
-      </button>
-
-      <button class="agrosky-ai-suggestion">
-        Should I spray?
-      </button>
-
-      <button class="agrosky-ai-suggestion">
-        What crops can I grow?
-      </button>
-
-      <button class="agrosky-ai-suggestion">
-        What should I do today?
-      </button>
-
-    </div>
-
-    <form class="agrosky-ai-input" id="agroskyAiForm">
-
-      <input
-        id="agroskyAiInput"
-        type="text"
-        autocomplete="off"
-        placeholder="Ask AgroSky AI..."
-      >
-
-      <button
-        class="agrosky-ai-send"
-        type="submit"
-        aria-label="Send message"
-      >
-        ➤
-      </button>
-
-    </form>
-  `;
-
-  document.body.appendChild(aiWindow);
-
-
-  /* -------------------------------------------------------
-     GET AI ELEMENTS
-     ------------------------------------------------------- */
-
-  const messagesContainer =
-    document.querySelector("#agroskyAiMessages");
-
-  const aiForm =
-    document.querySelector("#agroskyAiForm");
-
-  const aiInput =
-    document.querySelector("#agroskyAiInput");
-
-  const closeButton =
-    aiWindow.querySelector(".agrosky-ai-close");
-
-  const suggestionButtons =
-    aiWindow.querySelectorAll(
-      ".agrosky-ai-suggestion"
+    searchWeather(
+      "Lagos"
     );
 
+    startAutoWeatherUpdates();
+  }
+);```css
+/* ============================================================
+   AGROSKY LOGO
+============================================================ */
 
-  /* -------------------------------------------------------
-     DISPLAY MESSAGE
-     ------------------------------------------------------- */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  flex-shrink: 0;
+}
 
-  function addMessage(role, text) {
+.brand img {
+  width: 135px;
+  height: 58px;
+  object-fit: contain;
+  display: block;
+}
 
-    const wrapper =
-      document.createElement("div");
+.footer-brand img {
+  width: 145px;
+  height: 65px;
+}
 
-    wrapper.className =
-      `agrosky-ai-message ${role}`;
 
-    const bubble =
-      document.createElement("div");
+/* ============================================================
+   AGROSKY AI
+============================================================ */
 
-    bubble.className =
-      "agrosky-ai-bubble";
+.ai-panel {
+  position: relative;
+  overflow: hidden;
+}
 
-    bubble.textContent = text;
+.ai-header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 25px;
+  align-items: center;
+  margin-bottom: 28px;
+}
 
-    wrapper.appendChild(bubble);
+.ai-icon {
+  width: 70px;
+  height: 70px;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background: #1d6d43;
+  font-size: 2rem;
+  box-shadow: 0 10px 25px #00000022;
+}
 
-    messagesContainer.appendChild(wrapper);
+.ai-chat {
+  background: #ffffff12;
+  border: 1px solid #ffffff18;
+  border-radius: 20px;
+  padding: 20px;
+}
 
-    messagesContainer.scrollTop =
-      messagesContainer.scrollHeight;
+.ai-messages {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 5px;
+  margin-bottom: 15px;
+}
 
-    aiMessages.push({
-      role,
-      text
-    });
+.ai-message {
+  max-width: 85%;
+  padding: 13px 16px;
+  border-radius: 15px;
+  line-height: 1.5;
+}
+
+.ai-message p {
+  margin: 5px 0 0;
+}
+
+.ai-message.bot {
+  align-self: flex-start;
+  background: #ffffff;
+  color: #173225;
+  border-bottom-left-radius: 5px;
+}
+
+.ai-message.user {
+  align-self: flex-end;
+  background: #197344;
+  color: #ffffff;
+  border-bottom-right-radius: 5px;
+}
+
+.ai-message strong {
+  font-size: .85rem;
+}
+
+.ai-message.user strong {
+  color: #ffffff;
+}
+
+.ai-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-quick-actions button {
+  border: 1px solid #ffffff30;
+  background: #ffffff12;
+  color: #ffffff;
+  padding: 8px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .2s ease, transform .2s ease;
+}
+
+.ai-quick-actions button:hover {
+  background: #ffffff22;
+  transform: translateY(-1px);
+}
+
+.ai-input {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #173225;
+}
+
+.ai-input button {
+  background: #72cf91;
+  color: #123b28;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: .2s ease;
+}
+
+.ai-input button:hover {
+  background: #8bdca5;
+}
+
+.ai-input button:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
+.ai-typing {
+  opacity: .7;
+}
+
+.ai-typing span {
+  display: inline-block;
+  animation: aiDot 1.2s infinite;
+}
+
+.ai-typing span:nth-child(2) {
+  animation-delay: .15s;
+}
+
+.ai-typing span:nth-child(3) {
+  animation-delay: .3s;
+}
+
+@keyframes aiDot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
   }
 
+  30% {
+    transform: translateY(-4px);
+  }
+}
 
-  /* -------------------------------------------------------
-     GET CURRENT WEATHER
-     ------------------------------------------------------- */
 
-  function getCurrentWeatherData() {
+/* ============================================================
+   MOBILE
+============================================================ */
 
-    const weather =
-      window.agroSkyWeather;
+@media (max-width: 560px) {
 
-    const location =
-      window.agroSkyLocation;
-
-    if (!weather || !weather.current) {
-      return null;
-    }
-
-    const current =
-      weather.current;
-
-    const daily =
-      weather.daily || {};
-
-    return {
-      location:
-        location?.name || "your location",
-
-      temperature:
-        current.temperature_2m,
-
-      humidity:
-        current.relative_humidity_2m,
-
-      wind:
-        current.wind_speed_10m,
-
-      rain:
-        daily.precipitation_probability_max?.[0] ?? 0,
-
-      weatherCode:
-        current.weather_code
-    };
+  .brand img {
+    width: 110px;
+    height: 50px;
   }
 
-
-  /* -------------------------------------------------------
-     WEATHER DESCRIPTION
-     ------------------------------------------------------- */
-
-  function getAIWeatherDescription(code) {
-
-    const descriptions = {
-
-      0: "clear skies",
-
-      1: "mainly clear skies",
-
-      2: "partly cloudy conditions",
-
-      3: "overcast conditions",
-
-      45: "foggy conditions",
-
-      48: "foggy conditions",
-
-      51: "light drizzle",
-
-      53: "moderate drizzle",
-
-      55: "heavy drizzle",
-
-      61: "light rain",
-
-      63: "moderate rain",
-
-      65: "heavy rain",
-
-      71: "light snow",
-
-      73: "moderate snow",
-
-      75: "heavy snow",
-
-      80: "light rain showers",
-
-      81: "moderate rain showers",
-
-      82: "heavy rain showers",
-
-      95: "thunderstorm",
-
-      96: "thunderstorm",
-
-      99: "severe thunderstorm"
-    };
-
-    return descriptions[code] ||
-      "changing weather conditions";
+  .footer-brand img {
+    width: 125px;
+    height: 55px;
   }
 
-
-  /* -------------------------------------------------------
-     GENERATE FARMING AI RESPONSE
-     ------------------------------------------------------- */
-
-  function generateAIResponse(question) {
-
-    const text =
-      question.toLowerCase().trim();
-
-    const data =
-      getCurrentWeatherData();
-
-
-    /* -----------------------------------------------------
-       NO WEATHER DATA
-       ----------------------------------------------------- */
-
-    if (!data) {
-
-      return (
-        "I don't have live weather data yet. 🌦️\n\n" +
-        "Please search for a location using the weather " +
-        "search box first. Once AgroSky loads the weather, " +
-        "I can use it to give you farming guidance."
-      );
-    }
-
-
-    const {
-      location,
-      temperature,
-      humidity,
-      wind,
-      rain,
-      weatherCode
-    } = data;
-
-
-    /* -----------------------------------------------------
-       WEATHER QUESTION
-       ----------------------------------------------------- */
-
-    if (
-      text.includes("weather") ||
-      text.includes("temperature") ||
-      text.includes("hot") ||
-      text.includes("cold")
-    ) {
-
-      return (
-        `Current conditions for ${location}:\n\n` +
-
-        `🌡️ Temperature: ${Math.round(temperature)}°C\n` +
-
-        `☁️ Conditions: ` +
-        `${getAIWeatherDescription(weatherCode)}\n` +
-
-        `💧 Humidity: ${humidity}%\n` +
-
-        `💨 Wind: ${Math.round(wind)} km/h\n` +
-
-        `🌧️ Rain probability: ${rain}%`
-      );
-    }
-
-
-    /* -----------------------------------------------------
-       RAIN QUESTION
-       ----------------------------------------------------- */
-
-    if (
-      text.includes("rain") ||
-      text.includes("rainfall")
-    ) {
-
-      if (rain >= 70) {
-
-        return (
-          `Yes, rain is quite likely around ${location}. 🌧️\n\n` +
-
-          `The current forecast gives about ${rain}% ` +
-          `rain probability.\n\n` +
-
-          `🌱 Farming advice:\n` +
-          `• Check drainage channels.\n` +
-          `• Protect harvested produce.\n` +
-          `• Avoid unnecessary spraying before rainfall.\n` +
-          `• Monitor low-lying areas of the farm.`
-        );
-      }
-
-      if (rain >= 40) {
-
-        return (
-          `There is a moderate chance of rain around ` +
-          `${location}: about ${rain}%.\n\n` +
-
-          `Keep an eye on the forecast before spraying, ` +
-          `fertilizing or harvesting.`
-        );
-      }
-
-      return (
-        `The current rain probability around ${location} ` +
-        `is relatively low at ${rain}%.\n\n` +
-
-        `You should still monitor soil moisture before ` +
-        `deciding whether irrigation is necessary.`
-      );
-    }
-
-
-    /* -----------------------------------------------------
-       SPRAYING QUESTION
-       ----------------------------------------------------- */
-
-    if (
-      text.includes("spray") ||
-      text.includes("spraying") ||
-      text.includes("pesticide")
-    ) {
-
-      if (rain >= 60) {
-
-        return (
-          "I would be cautious about spraying right now. ⚠️\n\n" +
-
-          `Rain probability is around ${rain}%, ` +
-          "so rainfall could reduce the effectiveness of " +
-          "some applications.\n\n" +
-
-          `Wind is around ${Math.round(wind)} km/h.\n\n` +
-
-          "Check the product label and local agronomic " +
-          "guidance, and choose a suitable weather window."
-        );
-      }
-
-      if (wind >= 20) {
-
-        return (
-          "Wind conditions deserve caution before spraying. 💨\n\n" +
-
-          `Current wind speed is about ${Math.round(wind)} km/h.\n\n` +
-
-          "Strong wind can increase spray drift. Wait for " +
-          "a safer window and follow the product label."
-        );
-      }
-
-      return (
-        "Current weather conditions do not show a major " +
-        "rain or wind warning for spraying. 🌱\n\n" +
-
-        `Rain probability: ${rain}%\n` +
-        `Wind: ${Math.round(wind)} km/h\n\n` +
-
-        "However, always follow the pesticide label and " +
-        "local agricultural safety guidance."
-      );
-    }
-
-
-    /* -----------------------------------------------------
-       IRRIGATION QUESTION
-       ----------------------------------------------------- */
-
-    if (
-      text.includes("irrigat") ||
-      text.includes("water my farm") ||
-      text.includes("watering")
-    ) {
-
-      if (rain >= 60) {
-
-        return (
-          "You may not need to irrigate immediately. 💧\n\n" +
-
-          `Rain probability is around ${rain}%.\n\n` +
-
-          "Check the soil first. If the soil already has " +
-          "adequate moisture, avoid unnecessary irrigation."
-        );
-      }
-
-      if (humidity < 55) {
-
-        return (
-          "Your conditions may require closer attention to " +
-          "soil moisture. 💧\n\n" +
-
-          `Humidity is around ${humidity}% and rain probability ` +
-          `is ${rain}%.\n\n` +
-
-          "Check the soil and crop needs before irrigating."
-        );
-      }
-
-      return (
-        "Check soil moisture before irrigation. 🌱\n\n" +
-
-        `Humidity: ${humidity}%\n` +
-        `Rain probability: ${rain}%\n\n` +
-
-        "The best irrigation decision should also consider " +
-        "crop type, soil type and growth stage."
-      );
-    }
-
-
-    /* -----------------------------------------------------
-       CROP QUESTION
-       ----------------------------------------------------- */
-
-    if (
-      text.includes("crop") ||
-      text.includes("plant") ||
-      text.includes("grow") ||
-      text.includes("maize") ||
-      text.includes("cassava") ||
-      text.includes("okra") ||
-      text.includes("tomato")
-    ) {
-
-      if (
-        temperature >= 27 &&
-        humidity >= 70
-      ) {
-
-        return (
-          `The current conditions around ${location} are ` +
-          "warm and humid. 🌱\n\n" +
-
-          "Some crops commonly suited to tropical conditions " +
-          "include:\n\n" +
-
-          "🌽 Maize\n" +
-          "🌱 Cassava\n" +
-          "🥬 Okra\n" +
-          "🌶️ Pepper\n\n" +
-
-          "Before planting, also consider soil type, season, " +
-          "crop variety and local agronomic recommendations."
-        );
-      }
-
-      if (
-        temperature >= 25 &&
-        rain >= 50
-      ) {
-
-        return (
-          "The current conditions are warm with a useful " +
-          "chance of rainfall. 🌦️\n\n" +
-
-          "Possible crop options include:\n\n" +
-
-          "🌽 Maize\n" +
-          "🌱 Cassava\n" +
-          "🫘 Beans\n" +
-          "🥬 Vegetables\n\n" +
-
-          "Good drainage is especially important when rainfall " +
-          "is frequent."
-        );
-      }
-
-      return (
-        "Some broad crop options to consider are:\n\n" +
-
-        "🌽 Maize\n" +
-        "🌱 Cassava\n" +
-        "🫘 Beans\n" +
-        "🥬 Vegetables\n\n" +
-
-        "For a reliable planting decision, consider your soil, " +
-        "season, crop variety and local agricultural guidance."
-      );
-    }
-
-
-    /* -----------------------------------------------------
-       FARM TODAY QUESTION
-       ----------------------------------------------------- */
-
-    if (
-      text.includes("today") ||
-      text.includes("do today") ||
-      text.includes("farm today") ||
-      text.includes("advice")
-    ) {
-
-      let advice =
-        `Here's my farming assessment for ${location} today:\n\n`;
-
-      if (rain >= 60) {
-
-        advice +=
-          "🌧️ Rain: Prioritize drainage and protect harvested produce.\n";
-      } else {
-
-        advice +=
-          "🌤️ Rain: Rain risk is not currently high, but keep monitoring the forecast.\n";
-      }
-
-      if (wind >= 20) {
-
-        advice +=
-          "💨 Wind: Be cautious with spraying because of elevated wind.\n";
-      } else {
-
-        advice +=
-          "💨 Wind: Wind conditions are relatively moderate.\n";
-      }
-
-      if (temperature >= 32) {
-
-        advice +=
-          "🌡️ Heat: Plan demanding field work for cooler periods and monitor soil moisture.\n";
-      } else {
-
-        advice +=
-          "🌡️ Temperature: Conditions are not showing a major heat warning.\n";
-      }
-
-      if (humidity >= 80) {
-
-        advice +=
-          "💧 Humidity: High humidity means crops should be monitored regularly for disease pressure.";
-      } else {
-
-        advice +=
-          "🌱 Crops: Continue routine crop scouting and field observations.";
-      }
-
-      return advice;
-    }
-
-
-    /* -----------------------------------------------------
-       HELP QUESTION
-       ----------------------------------------------------- */
-
-    if (
-      text.includes("help") ||
-      text.includes("what can you do") ||
-      text.includes("who are you")
-    ) {
-
-      return (
-        "I'm AgroSky AI. 🌱🤖\n\n" +
-
-        "I can currently help you with:\n\n" +
-
-        "🌦️ Weather conditions\n" +
-        "🌧️ Rain probability\n" +
-        "💧 Irrigation decisions\n" +
-        "🌱 Crop suggestions\n" +
-        "🧴 Spraying weather conditions\n" +
-        "🚜 Daily farm activities\n" +
-        "⚠️ Weather-related farm alerts\n\n" +
-
-        "Try asking me something like " +
-        "\"Should I spray today?\""
-      );
-    }
-
-
-    /* -----------------------------------------------------
-       GREETINGS
-       ----------------------------------------------------- */
-
-    if (
-      text === "hi" ||
-      text === "hello" ||
-      text.includes("good morning") ||
-      text.includes("good afternoon") ||
-      text.includes("good evening")
-    ) {
-
-      return (
-        `Hello! 🌱\n\n` +
-
-        `I'm ready to help with your farm in ${location}.\n\n` +
-
-        "Ask me about today's weather, rain, irrigation, " +
-        "spraying, crops or farm activities."
-      );
-    }
-
-
-    /* -----------------------------------------------------
-       DEFAULT RESPONSE
-       ----------------------------------------------------- */
-
-    return (
-      "I can help you make sense of the weather for farming. 🌱\n\n" +
-
-      "Try asking:\n\n" +
-
-      "• Will it rain today?\n" +
-      "• Should I spray today?\n" +
-      "• Should I irrigate?\n" +
-      "• What crops can I grow?\n" +
-      "• What should I do on my farm today?\n" +
-      "• What is the current weather?"
-    );
+  .ai-header {
+    grid-template-columns: 1fr;
+    gap: 15px;
   }
 
-
-  /* -------------------------------------------------------
-     SEND MESSAGE
-     ------------------------------------------------------- */
-
-  function sendAIMessage(question) {
-
-    const cleanQuestion =
-      String(question || "").trim();
-
-    if (!cleanQuestion) {
-      return;
-    }
-
-    addMessage(
-      "user",
-      cleanQuestion
-    );
-
-    aiInput.value = "";
-
-
-    /* Show thinking indicator */
-
-    const typing =
-      document.createElement("div");
-
-    typing.className =
-      "agrosky-ai-typing";
-
-    typing.textContent =
-      "AgroSky AI is thinking...";
-
-    messagesContainer.appendChild(typing);
-
-    messagesContainer.scrollTop =
-      messagesContainer.scrollHeight;
-
-
-    /* Small natural response delay */
-
-    setTimeout(() => {
-
-      typing.remove();
-
-      const response =
-        generateAIResponse(
-          cleanQuestion
-        );
-
-      addMessage(
-        "ai",
-        response
-      );
-
-    }, 450);
+  .ai-icon {
+    width: 58px;
+    height: 58px;
+    font-size: 1.6rem;
   }
 
-
-  /* -------------------------------------------------------
-     OPEN AI
-     ------------------------------------------------------- */
-
-  aiButton.addEventListener(
-    "click",
-    () => {
-
-      aiWindow.classList.toggle("open");
-
-      if (
-        aiWindow.classList.contains("open")
-      ) {
-        aiInput.focus();
-      }
-    }
-  );
-
-
-  /* -------------------------------------------------------
-     CLOSE AI
-     ------------------------------------------------------- */
-
-  closeButton.addEventListener(
-    "click",
-    () => {
-      aiWindow.classList.remove("open");
-    }
-  );
-
-
-  /* -------------------------------------------------------
-     FORM SUBMIT
-     ------------------------------------------------------- */
-
-  aiForm.addEventListener(
-    "submit",
-    (event) => {
-
-      event.preventDefault();
-
-      sendAIMessage(
-        aiInput.value
-      );
-    }
-  );
-
-
-  /* -------------------------------------------------------
-     SUGGESTION BUTTONS
-     ------------------------------------------------------- */
-
-  suggestionButtons.forEach(
-    (button) => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          sendAIMessage(
-            button.textContent
-          );
-        }
-      );
-
-    }
-  );
-
-
-  /* -------------------------------------------------------
-     INITIAL AI MESSAGE
-     ------------------------------------------------------- */
-
-  messagesContainer.innerHTML = "";
-
-  addMessage(
-    "ai",
-    aiMessages[0].text
-  );
-
-
-  /* -------------------------------------------------------
-     UPDATE ORIGINAL AI PANEL
-     ------------------------------------------------------- */
-
-  if (typeof window.updateAIAdvice === "function") {
-
-    const originalUpdateAI =
-      window.updateAIAdvice;
-
-    window.updateAIAdvice =
-      function(weather, location) {
-
-        originalUpdateAI(
-          weather,
-          location
-        );
-
-        window.agroSkyWeather =
-          weather;
-
-        window.agroSkyLocation =
-          location;
-      };
+  .ai-message {
+    max-width: 95%;
   }
 
-})();
+  .ai-input {
+    flex-direction: column;
+  }
+
+  .ai-input input,
+  .ai-input button {
+    width: 100%;
+  }
+
+  .ai-quick-actions button {
+    font-size: .82rem;
+  }
+}
+```
